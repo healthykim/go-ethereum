@@ -119,9 +119,10 @@ type handler struct {
 	chain    *core.BlockChain
 	maxPeers int
 
-	downloader *downloader.Downloader
-	txFetcher  *fetcher.TxFetcher
-	peers      *peerSet
+	downloader  *downloader.Downloader
+	txFetcher   *fetcher.TxFetcher
+	blobFetcher *fetcher.BlobFetcher
+	peers       *peerSet
 
 	eventMux   *event.TypeMux
 	txsCh      chan core.NewTxsEvent

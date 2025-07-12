@@ -309,6 +309,7 @@ func (f *TxFetcher) isKnownUnderpriced(hash common.Hash) bool {
 // and the fetcher. This method may be called by both transaction broadcasts and
 // direct request replies. The differentiation is important so the fetcher can
 // re-schedule missing transactions as soon as possible.
+// TODO-BS modify for type 3 transaction
 func (f *TxFetcher) Enqueue(peer string, txs []*types.Transaction, direct bool) error {
 	var (
 		inMeter          = txReplyInMeter

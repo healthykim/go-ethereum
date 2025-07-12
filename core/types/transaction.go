@@ -56,6 +56,8 @@ type Transaction struct {
 	inner TxData    // Consensus contents of a transaction
 	time  time.Time // Time first seen locally (spam avoidance)
 
+	hasPayload bool // For blob tx. default: false
+
 	// caches
 	hash atomic.Pointer[common.Hash]
 	size atomic.Uint64
@@ -588,6 +590,15 @@ func (tx *Transaction) WithSignature(signer Signer, sig []byte) (*Transaction, e
 	cpy := tx.inner.copy()
 	cpy.setSignatureValues(signer.ChainID(), v, r, s)
 	return &Transaction{inner: cpy, time: tx.time}, nil
+}
+
+// HasPaylaod returns whether the node has its blob data
+func (tx *Transaction) HasPayload() bool {
+	return tx.hasPayload
+}
+
+func (tx *Transaction) SetHasPayload(hasPayload bool) {
+	tx.hasPayload = hasPayload
 }
 
 // Transactions implements DerivableList for transactions.

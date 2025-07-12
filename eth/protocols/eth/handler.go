@@ -181,6 +181,7 @@ var eth68 = map[uint64]msgHandler{
 	PooledTransactionsMsg:         handlePooledTransactions,
 }
 
+// TODO-BS Add handler for payload response
 var eth69 = map[uint64]msgHandler{
 	TransactionsMsg:               handleTransactions,
 	NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes,
