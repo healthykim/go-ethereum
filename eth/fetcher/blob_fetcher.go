@@ -25,6 +25,8 @@ const (
 	// TODO(healthykim): should we limit to one blob transaction per fetch?
 	maxPayloadRetrievalSize = 128 * 1024
 	maxPayloadRetrievals    = 1
+	// todo(heatlhykim)
+	maxPayloadAnnounces = 4096
 )
 
 type blobTxAnnounce struct {
@@ -43,17 +45,18 @@ type payloadDelivery struct {
 	hashes []common.Hash // Hashes of transactions that were delivered
 }
 
-// TODO-BS: do we need metering here?
-
-// TODO-BS: should txMetadata include hasPayload?
+// todo(healthykim): add logic for metering
 // BlobFetcher is responsible for managing type 3 transactions based on peer announcements.
 //
 // BlobFetcher manages three buffers:
 //   - Transactions not to be fetched are moved to "waitlist"
+//     if a paylaoad seems to be possessed by 4(threshold) other peers, accept it. Otherwise, it is dropped
 //   - Transactions queued to be fetched are moved to "announces"
-//     if a payload is received, it is added to the blob pool. Otherwise, it is dropped.
+//     if a payload is received, it is added to the blob pool. Otherwise, the transaction is dropped.
 //   - Transactions to be fetched are moved to "fetching"
-//     if a payload is received during fetch, the peer is recorded as an alternate source.
+//     if a payload announcement is received during fetch, the peer is recorded as an alternate source.
+//
+// todo buffer renaming
 type BlobFetcher struct {
 	notify  chan *blobTxAnnounce
 	cleanup chan *payloadDelivery
@@ -66,13 +69,23 @@ type BlobFetcher struct {
 	waitlist  map[common.Hash]map[string]struct{} // Peer set who announced blob availability
 	waittime  map[common.Hash]mclock.AbsTime      // Timestamp when added to waitlist
 	waitslots map[string]map[common.Hash]struct{} // Waiting announcements grouped by peer (DoS protection)
+	// waitSlots should also include the announcements without hasPayload, because such announcements
+	// also have to be considered at DoS protection
 
-	// Buffer 2: Transactions queued for fetching (pull decision)
-	announces    map[string]map[common.Hash]uint64   // Set of announced transactions, grouped by origin peer
-	announced    map[common.Hash]map[string]struct{} // Peer set who announced blob availability (key: txHash, value: peerId)
-	announcetime map[common.Hash]mclock.AbsTime      // Timestamps when added to announces
+	// Buffer 2
+	// Stage 1: Transactions that have been observed but are still waiting for candidate peer to fetch it from
+	seenby   map[string]map[common.Hash]struct{}
+	peerwait map[common.Hash]struct{}
+	seentime map[common.Hash]mclock.AbsTime // Timestamps when first seen
 
-	// Buffer 3: Transactions currently being fetched (pull decision)
+	// Buffer 2
+	// Stage 2: Transactions queued for fetching (pull decision)
+	// "announces" is shared with stage 3, for DoS protection
+	announces map[string]map[common.Hash]uint64   // Set of announced transactions, grouped by origin peer
+	announced map[common.Hash]map[string]struct{} // Peer set who announced blob availability (key: txHash, value: peerId)
+
+	// Buffer 2
+	// Stage 3: Transactions currently being fetched (pull decision)
 	fetching   map[common.Hash]string              // Transaction set currently being retrieved
 	requests   map[string]*payloadRequest          // In-flight transaction retrievals
 	alternates map[common.Hash]map[string]struct{} // In-flight transaction alternate origins (in case of the peer dropped)
@@ -106,9 +119,11 @@ func NewBlobFetcher(
 		waitlist:      make(map[common.Hash]map[string]struct{}),
 		waittime:      make(map[common.Hash]mclock.AbsTime),
 		waitslots:     make(map[string]map[common.Hash]struct{}),
+		seenby:        make(map[string]map[common.Hash]struct{}),
+		peerwait:      make(map[common.Hash]struct{}),
+		seentime:      make(map[common.Hash]mclock.AbsTime),
 		announces:     make(map[string]map[common.Hash]uint64),
 		announced:     make(map[common.Hash]map[string]struct{}),
-		announcetime:  make(map[common.Hash]mclock.AbsTime),
 		fetching:      make(map[common.Hash]string),
 		requests:      make(map[string]*payloadRequest),
 		alternates:    make(map[common.Hash]map[string]struct{}),
@@ -145,7 +160,10 @@ func (f *BlobFetcher) Notify(peer string, txs []*types.Transaction) error {
 		}
 	}
 
-	// Push it to the main loop
+	// If anything's left to announce, push it into the internal loop
+	if len(withoutPayload)+len(withPayload) == 0 {
+		return nil
+	}
 	blobAnnounce := &blobTxAnnounce{origin: peer, withPayload: withPayload, withoutPayload: withoutPayload}
 	select {
 	case f.notify <- blobAnnounce:
@@ -207,20 +225,41 @@ func (f *BlobFetcher) Stop() {
 
 func (f *BlobFetcher) loop() {
 	var (
-		waitTimer      = new(mclock.Timer) // Timer for waitlist (availability)
-		waitTrigger    = make(chan struct{}, 1)
-		timeoutTimer   = new(mclock.Timer) // Timer for payload fetch request
-		timeoutTrigger = make(chan struct{}, 1)
+		waitTimer       = new(mclock.Timer) // Timer for waitlist (availability)
+		waitTrigger     = make(chan struct{}, 1)
+		peerWaitTimer   = new(mclock.Timer)
+		peerWaitTrigger = make(chan struct{}, 1)
+		timeoutTimer    = new(mclock.Timer) // Timer for payload fetch request
+		timeoutTrigger  = make(chan struct{}, 1)
 	)
 	for {
 		select {
 		case ann := <-f.notify:
 			//TODO-BS DOS protection
 			//TODO-BS announced timeout
+			// Drop part of the announcements if too many have accumulated from that peer
+			// This prevents a peer from dominating the queue with txs without responding to the request
+			// This is why announces is designed to include the transactions that are currerntly being fetched
+			used := len(f.waitslots[ann.origin]) + len(f.seenby[ann.origin]) + len(f.announces[ann.origin])
+			if used >= maxPayloadAnnounces {
+				// Already full
+				break
+			}
+
+			wantWithPayload := used + len(ann.withPayload)
+			wantWithoutPayload := wantWithPayload + len(ann.withoutPayload)
+			if wantWithPayload >= maxPayloadAnnounces {
+				// drop part of withPayload, drop all of withoutpaylaod
+				ann.withPayload = ann.withPayload[:maxPayloadAnnounces-used] // fill the left amount by withPayload
+				ann.withoutPayload = ann.withoutPayload[:0]
+			} else if wantWithoutPayload >= maxPayloadAnnounces {
+				// Enough space for withPayload, drop part of without Payload
+				ann.withoutPayload = ann.withoutPayload[:maxPayloadAnnounces-wantWithoutPayload]
+			}
 
 			var (
 				idleWait   = len(f.waittime) == 0
-				_, oldPeer = f.announces[ann.origin]
+				_, oldPeer = f.announces[ann.origin] // todo
 
 				// nextSeq returns the next available sequence number for tagging
 				nextSeq = func() uint64 {
@@ -238,6 +277,35 @@ func (f *BlobFetcher) loop() {
 						continue
 					}
 					f.waitlist[hash][ann.origin] = struct{}{}
+					if waitslots := f.waitslots[ann.origin]; waitslots != nil {
+						waitslots[hash] = struct{}{}
+					} else {
+						f.waitslots[ann.origin] = map[common.Hash]struct{}{
+							hash: {},
+						}
+					}
+					continue
+				}
+
+				if _, ok := f.peerwait[hash]; ok {
+					// Transaction waiting for peer to fetch tx from (decided as pull)
+					// Move hash to stage 2
+					if f.announced[hash] != nil {
+						panic("announce tracker already contains peerwait item")
+					}
+					f.announced[hash] = map[string]struct{}{ann.origin: {}}
+					if f.announces[ann.origin] == nil {
+						f.announces[ann.origin] = make(map[common.Hash]uint64)
+					}
+					f.announces[ann.origin][hash] = nextSeq()
+
+					delete(f.seenby[ann.origin], hash)
+					if len(f.seenby[ann.origin]) == 0 {
+						delete(f.seenby, ann.origin)
+					}
+					delete(f.peerwait, hash)
+					delete(f.seentime, hash)
+
 					continue
 				}
 
@@ -259,12 +327,9 @@ func (f *BlobFetcher) loop() {
 					continue
 				}
 
-				if _, ok := f.fetching[hash]; ok {
+				if f.alternates[hash] != nil {
 					// Transaction is being fetched (decided as pull)
 					// add the peer as an alternate source and update announces
-					if f.alternates[hash] == nil {
-						f.alternates[hash] = make(map[string]struct{})
-					}
 					f.alternates[hash][ann.origin] = struct{}{}
 
 					if f.announces[ann.origin] == nil {
@@ -293,24 +358,30 @@ func (f *BlobFetcher) loop() {
 						f.announces[ann.origin] = make(map[common.Hash]uint64)
 					}
 					f.announces[ann.origin][hash] = nextSeq()
-					f.announcetime[hash] = f.clock.Now()
 				}
 			}
 
+			var newPeerWait = false
 			// For transactions announced without payload, apply the same random decision process for pull/not-pull
 			// and set timer, only if the trasnaction status is not decided yet
 			for _, hash := range ann.withoutPayload {
-				_, ok := f.fetching[hash]
-				if !ok || f.waitlist[hash] != nil || f.announced[hash] != nil {
+				_, fetching := f.fetching[hash]
+				_, waitingpeer := f.peerwait[hash]
+				if !fetching || f.waitlist[hash] != nil || !waitingpeer || f.announced[hash] != nil {
 					// Skip if transaction status is already decided
 					continue
 				}
 				// For transactions unknown to the blobFetcher,
 				// randomly decide whether to pull (15%) or not pull (85%)
 				if rand.New(rand.NewSource(time.Now().UnixNano())).Intn(100) < 15 {
-					// New transaction & decided as pull -> add to announces queue without any peer
-					f.announced[hash] = make(map[string]struct{})
-					f.announcetime[hash] = f.clock.Now()
+					// New transaction & decided as pull -> add to peerwait queue
+					f.peerwait[hash] = struct{}{}
+					if f.seenby[ann.origin] == nil {
+						f.seenby[ann.origin] = make(map[common.Hash]struct{})
+					}
+					f.seenby[ann.origin][hash] = struct{}{}
+					f.seentime[hash] = f.clock.Now()
+					newPeerWait = true
 				} else {
 					// New transaction & decided as not pull -> add to waitlist without any peer (since payload cannot be pulled from the peer)
 					f.waitlist[hash] = make(map[string]struct{})
@@ -320,7 +391,12 @@ func (f *BlobFetcher) loop() {
 
 			// If a new item was added to the waitlist, schedule its timeout
 			if idleWait && len(f.waittime) > 0 {
-				f.rescheduleTimeout(waitTimer, waitTrigger)
+				f.rescheduleWait(waitTimer, waitTrigger)
+			}
+
+			// If a new item was added to the peerwait, schedule its timeout
+			if newPeerWait {
+				f.reschedulePeerWait(peerWaitTimer, peerWaitTrigger)
 			}
 
 			// If this is a new peer and that peer sent transaction with payload flag,
@@ -342,11 +418,46 @@ func (f *BlobFetcher) loop() {
 					} else {
 						dropHashes = append(dropHashes, hash)
 					}
+					for peer := range f.waitlist[hash] {
+						delete(f.waitslots[peer], hash)
+						if len(f.waitslots[peer]) == 0 {
+							delete(f.waitslots, peer)
+						}
+					}
 					delete(f.waittime, hash)
 					delete(f.waitlist, hash)
 				}
 			}
 			f.makeAvailable(availableHashes)
+			f.dropTxs(dropHashes)
+
+			// If transactions are still waiting for availability, reschedule the wait timer
+			if len(f.waittime) > 0 {
+				f.rescheduleWait(waitTimer, waitTrigger)
+			}
+		case <-peerWaitTrigger:
+			// At least one transaction's peer waiting time ran out, pop all expired ones
+			// and update the blobpool
+			dropHashes := make([]common.Hash, 0, len(f.seentime))
+			for hash, instance := range f.seentime {
+				if time.Duration(f.clock.Now()-instance)+txGatherSlack > txArriveTimeout {
+					dropHashes = append(dropHashes, hash)
+					// clear the maps
+
+					var emptyPeers []string
+					for peer, hashes := range f.seenby {
+						delete(hashes, hash)
+						if len(f.seenby[peer]) == 0 {
+							emptyPeers = append(emptyPeers, peer)
+						}
+					}
+					for _, peer := range emptyPeers {
+						delete(f.seenby, peer)
+					}
+					delete(f.seentime, hash)
+					delete(f.peerwait, hash)
+				}
+			}
 			f.dropTxs(dropHashes)
 
 			// If transactions are still waiting for availability, reschedule the wait timer
@@ -372,7 +483,6 @@ func (f *BlobFetcher) loop() {
 						delete(f.announced[hash], peer)
 						if len(f.announced[hash]) == 0 {
 							delete(f.announced, hash)
-							delete(f.announcetime, hash)
 							dropHashes = append(dropHashes, hash)
 						}
 						delete(f.announces[peer], hash)
@@ -403,8 +513,7 @@ func (f *BlobFetcher) loop() {
 						delete(f.announces, peer)
 					}
 				}
-				delete(f.announced, hash) // todo(healthykim) Is this possible?
-				delete(f.announcetime, hash)
+				// delete(f.announced, hash) // todo(healthykim) Is this possible?
 				delete(f.alternates, hash)
 				delete(f.fetching, hash)
 			}
@@ -441,7 +550,6 @@ func (f *BlobFetcher) loop() {
 						// Remove origin from candidate sources for partial responses
 						delete(f.alternates[hash], delivery.origin)
 						delete(f.announces[delivery.origin], hash)
-						delete(f.announcetime, hash)
 						if len(f.announces[delivery.origin]) == 0 {
 							delete(f.announces, delivery.origin)
 						}
@@ -466,17 +574,44 @@ func (f *BlobFetcher) loop() {
 		case drop := <-f.drop:
 			// A peer was dropped, remove all traces of it
 			if _, ok := f.waitslots[drop.peer]; ok {
+				var dropHashes = make([]common.Hash, 0, len(f.waitslots[drop.peer]))
 				for hash := range f.waitslots[drop.peer] {
 					delete(f.waitlist[hash], drop.peer)
 					if len(f.waitlist[hash]) == 0 {
 						delete(f.waitlist, hash)
 						delete(f.waittime, hash)
 					}
+					dropHashes = append(dropHashes, hash)
 				}
 				delete(f.waitslots, drop.peer)
+				f.dropTxs(dropHashes)
 				if len(f.waitlist) > 0 {
 					f.rescheduleWait(waitTimer, waitTrigger)
 				}
+			}
+			// Remove hash that put to the peerwait stage by that peer
+			if hashes, ok := f.seenby[drop.peer]; ok {
+				dropHashes := make([]common.Hash, 0, len(hashes))
+				for hash := range hashes {
+					delete(f.peerwait, hash)
+					delete(f.waittime, hash)
+					dropHashes = append(dropHashes, hash)
+				}
+				delete(f.waitslots, drop.peer)
+				f.dropTxs(dropHashes)
+			}
+			// Clean up general announcement tracking
+			if _, ok := f.announces[drop.peer]; ok {
+				dropHashes := make([]common.Hash, 0, len(f.announces[drop.peer]))
+				for hash := range f.announces[drop.peer] {
+					delete(f.announced[hash], drop.peer)
+					if len(f.announced[hash]) == 0 {
+						delete(f.announced, hash)
+						dropHashes = append(dropHashes, hash)
+					}
+				}
+				delete(f.announces, drop.peer)
+				f.dropTxs(dropHashes)
 			}
 			// Clean up any active requests
 			var request *payloadRequest
@@ -493,20 +628,7 @@ func (f *BlobFetcher) loop() {
 					delete(f.fetching, hash)
 				}
 				delete(f.requests, drop.peer)
-			}
-			// Clean up general announcement tracking
-			if _, ok := f.announces[drop.peer]; ok {
-				dropHashes := make([]common.Hash, 0, len(f.announces[drop.peer]))
-				for hash := range f.announces[drop.peer] {
-					delete(f.announced[hash], drop.peer)
-					if len(f.announced[hash]) == 0 {
-						delete(f.announced, hash)
-						delete(f.announcetime, hash)
-						dropHashes = append(dropHashes, hash)
-					}
-				}
-				delete(f.announces, drop.peer)
-				f.dropTxs(dropHashes)
+				f.dropTxs(request.hashes)
 			}
 			// If a request was cancelled, check if anything needs to be rescheduled
 			if request != nil {
@@ -523,7 +645,28 @@ func (f *BlobFetcher) loop() {
 	}
 }
 
-// Exactly same as the one in TxFetcher
+// For peer waiting pull txs
+// todo(healthykim) integrate with reschduleWait?
+func (f *BlobFetcher) reschedulePeerWait(timer *mclock.Timer, trigger chan struct{}) {
+	if *timer != nil {
+		(*timer).Stop()
+	}
+	now := f.clock.Now()
+
+	earliest := now
+	for _, instance := range f.seentime {
+		if earliest > instance {
+			earliest = instance
+			if txArriveTimeout-time.Duration(now-earliest) < txGatherSlack {
+				break
+			}
+		}
+	}
+	*timer = f.clock.AfterFunc(txArriveTimeout-time.Duration(now-earliest), func() {
+		trigger <- struct{}{}
+	})
+}
+
 func (f *BlobFetcher) rescheduleWait(timer *mclock.Timer, trigger chan struct{}) {
 	if *timer != nil {
 		(*timer).Stop()
@@ -606,7 +749,6 @@ func (f *BlobFetcher) scheduleFetches(timer *mclock.Timer, timeout chan struct{}
 			}
 			f.alternates[hash] = f.announced[hash]
 			delete(f.announced, hash)
-			delete(f.announcetime, hash)
 
 			// Accumulate the hash and stop if the limit was reached
 			hashes = append(hashes, hash)
