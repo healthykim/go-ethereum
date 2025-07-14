@@ -56,7 +56,7 @@ type Transaction struct {
 	inner TxData    // Consensus contents of a transaction
 	time  time.Time // Time first seen locally (spam avoidance)
 
-	hasPayload bool // For blob tx. default: false
+	isAvailable bool // For blob tx. default: false
 
 	// caches
 	hash atomic.Pointer[common.Hash]
@@ -468,6 +468,7 @@ func (tx *Transaction) WithoutBlobTxSidecar() *Transaction {
 	return cpy
 }
 
+// TODO-BS
 // WithBlobTxSidecar returns a copy of tx with the blob sidecar added.
 func (tx *Transaction) WithBlobTxSidecar(sideCar *BlobTxSidecar) *Transaction {
 	blobtx, ok := tx.inner.(*BlobTx)
@@ -594,11 +595,11 @@ func (tx *Transaction) WithSignature(signer Signer, sig []byte) (*Transaction, e
 
 // HasPaylaod returns whether the node has its blob data
 func (tx *Transaction) HasPayload() bool {
-	return tx.hasPayload
+	return tx.BlobTxSidecar() != nil
 }
 
-func (tx *Transaction) SetHasPayload(hasPayload bool) {
-	tx.hasPayload = hasPayload
+func (tx *Transaction) IsAvailable() bool {
+	return tx.isAvailable
 }
 
 // Transactions implements DerivableList for transactions.

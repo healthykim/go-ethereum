@@ -65,8 +65,6 @@ func (prediction *BlobPrediction) Convert() []*engine.BlobPredictionToStage {
 // parent:
 // len: maximum # of blobs
 // header: For gas fee calculation
-// [Main Difference from fillTransactions]
-// - No prio/normal transaction
 func (miner *Miner) fillBlobs(blobId engine.PredictionID, max uint8, W uint8, timestamp uint64) ([]*types.Transaction, error) {
 	miner.confMu.RLock()
 	tip := miner.config.GasPrice

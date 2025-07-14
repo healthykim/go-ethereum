@@ -91,13 +91,12 @@ type BlobFetcher struct {
 	alternates map[common.Hash]map[string]struct{} // In-flight transaction alternate origins (in case of the peer dropped)
 
 	// Callbacks
-	hasTx         func(common.Hash) bool
-	hasPayload    func(common.Hash) bool
-	dropTxs       func([]common.Hash) []error
-	makeAvailable func([]common.Hash) bool
-	addPayloads   func([]common.Hash, []*types.BlobTxSidecar) []error
-	fetchPayloads func(string, []common.Hash) error
-	dropPeer      func(string)
+	hasTx              func(common.Hash) bool
+	hasPayload         func(common.Hash) bool
+	reportAvailability func([]common.Hash, bool) []error
+	addPayloads        func([]common.Hash, []*types.BlobTxSidecar) []error
+	fetchPayloads      func(string, []common.Hash) error
+	dropPeer           func(string)
 
 	// todo(healthykim) add tests
 	step     chan struct{}    // Notification channel when the fetcher loop iterates
@@ -108,34 +107,34 @@ type BlobFetcher struct {
 
 func NewBlobFetcher(
 	hasTx func(common.Hash) bool, hasPayload func(common.Hash) bool,
-	makeAvailable func([]common.Hash) bool, addPayloads func([]common.Hash, []*types.BlobTxSidecar) []error,
+	reportAvailability func([]common.Hash, bool) []error, addPayloads func([]common.Hash, []*types.BlobTxSidecar) []error,
 	fetchPayloads func(string, []common.Hash) error, dropPeer func(string), clock mclock.Clock, realTime func() time.Time,
 	rand *mrand.Rand) *BlobFetcher {
 	return &BlobFetcher{
-		notify:        make(chan *blobTxAnnounce),
-		cleanup:       make(chan *payloadDelivery),
-		drop:          make(chan *txDrop),
-		quit:          make(chan struct{}),
-		waitlist:      make(map[common.Hash]map[string]struct{}),
-		waittime:      make(map[common.Hash]mclock.AbsTime),
-		waitslots:     make(map[string]map[common.Hash]struct{}),
-		seenby:        make(map[string]map[common.Hash]struct{}),
-		peerwait:      make(map[common.Hash]struct{}),
-		seentime:      make(map[common.Hash]mclock.AbsTime),
-		announces:     make(map[string]map[common.Hash]uint64),
-		announced:     make(map[common.Hash]map[string]struct{}),
-		fetching:      make(map[common.Hash]string),
-		requests:      make(map[string]*payloadRequest),
-		alternates:    make(map[common.Hash]map[string]struct{}),
-		hasTx:         hasTx,
-		hasPayload:    hasPayload,
-		makeAvailable: makeAvailable,
-		addPayloads:   addPayloads,
-		fetchPayloads: fetchPayloads,
-		dropPeer:      dropPeer,
-		clock:         clock,
-		realTime:      realTime,
-		rand:          rand,
+		notify:             make(chan *blobTxAnnounce),
+		cleanup:            make(chan *payloadDelivery),
+		drop:               make(chan *txDrop),
+		quit:               make(chan struct{}),
+		waitlist:           make(map[common.Hash]map[string]struct{}),
+		waittime:           make(map[common.Hash]mclock.AbsTime),
+		waitslots:          make(map[string]map[common.Hash]struct{}),
+		seenby:             make(map[string]map[common.Hash]struct{}),
+		peerwait:           make(map[common.Hash]struct{}),
+		seentime:           make(map[common.Hash]mclock.AbsTime),
+		announces:          make(map[string]map[common.Hash]uint64),
+		announced:          make(map[common.Hash]map[string]struct{}),
+		fetching:           make(map[common.Hash]string),
+		requests:           make(map[string]*payloadRequest),
+		alternates:         make(map[common.Hash]map[string]struct{}),
+		hasTx:              hasTx,
+		hasPayload:         hasPayload,
+		reportAvailability: reportAvailability,
+		addPayloads:        addPayloads,
+		fetchPayloads:      fetchPayloads,
+		dropPeer:           dropPeer,
+		clock:              clock,
+		realTime:           realTime,
+		rand:               rand,
 	}
 }
 
@@ -428,8 +427,8 @@ func (f *BlobFetcher) loop() {
 					delete(f.waitlist, hash)
 				}
 			}
-			f.makeAvailable(availableHashes)
-			f.dropTxs(dropHashes)
+			f.reportAvailability(availableHashes, true)
+			f.reportAvailability(dropHashes, false)
 
 			// If transactions are still waiting for availability, reschedule the wait timer
 			if len(f.waittime) > 0 {
@@ -458,7 +457,7 @@ func (f *BlobFetcher) loop() {
 					delete(f.peerwait, hash)
 				}
 			}
-			f.dropTxs(dropHashes)
+			f.reportAvailability(dropHashes, false)
 
 			// If transactions are still waiting for availability, reschedule the wait timer
 			if len(f.waittime) > 0 {
@@ -496,7 +495,7 @@ func (f *BlobFetcher) loop() {
 					f.requests[peer].hashes = nil
 				}
 			}
-			f.dropTxs(dropHashes)
+			f.reportAvailability(dropHashes, false)
 
 			// Schedule a new transaction retrieval
 			f.scheduleFetches(timeoutTimer, timeoutTrigger, nil)
@@ -518,7 +517,7 @@ func (f *BlobFetcher) loop() {
 				delete(f.fetching, hash)
 			}
 			// Update mempool status for arrived hashes
-			f.makeAvailable(delivery.hashes)
+			f.reportAvailability(delivery.hashes, true)
 
 			// Remove the request
 			req := f.requests[delivery.origin]
@@ -568,7 +567,7 @@ func (f *BlobFetcher) loop() {
 				delete(f.alternates, hash)
 				delete(f.fetching, hash)
 			}
-			f.dropTxs(dropHashes)
+			f.reportAvailability(dropHashes, false)
 			// Something was delivered, try to reschedule requests
 			f.scheduleFetches(timeoutTimer, timeoutTrigger, nil) // Partial delivery may enable others to deliver too
 		case drop := <-f.drop:
@@ -584,7 +583,7 @@ func (f *BlobFetcher) loop() {
 					dropHashes = append(dropHashes, hash)
 				}
 				delete(f.waitslots, drop.peer)
-				f.dropTxs(dropHashes)
+				f.reportAvailability(dropHashes, false)
 				if len(f.waitlist) > 0 {
 					f.rescheduleWait(waitTimer, waitTrigger)
 				}
@@ -598,7 +597,7 @@ func (f *BlobFetcher) loop() {
 					dropHashes = append(dropHashes, hash)
 				}
 				delete(f.waitslots, drop.peer)
-				f.dropTxs(dropHashes)
+				f.reportAvailability(dropHashes, false)
 			}
 			// Clean up general announcement tracking
 			if _, ok := f.announces[drop.peer]; ok {
@@ -611,7 +610,7 @@ func (f *BlobFetcher) loop() {
 					}
 				}
 				delete(f.announces, drop.peer)
-				f.dropTxs(dropHashes)
+				f.reportAvailability(dropHashes, false)
 			}
 			// Clean up any active requests
 			var request *payloadRequest
@@ -628,7 +627,7 @@ func (f *BlobFetcher) loop() {
 					delete(f.fetching, hash)
 				}
 				delete(f.requests, drop.peer)
-				f.dropTxs(request.hashes)
+				f.reportAvailability(request.hashes, false)
 			}
 			// If a request was cancelled, check if anything needs to be rescheduled
 			if request != nil {
