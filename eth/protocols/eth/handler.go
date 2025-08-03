@@ -49,6 +49,8 @@ const (
 	// containing 200+ transactions nowadays, the practical limit will always
 	// be softResponseLimit.
 	maxReceiptsServe = 1024
+
+	maxPayloadsServe = 8 // conservative limit
 )
 
 // Handler is a callback to invoke from an outside runner after the boilerplate
@@ -91,6 +93,9 @@ type TxPool interface {
 	// GetRLP retrieves the RLP-encoded transaction from the local txpool with
 	// the given hash.
 	GetRLP(hash common.Hash) []byte
+
+	//todo(healthykim) refactor
+	GetSidecar(hash common.Hash) *types.BlobTxSidecar
 
 	// GetMetadata returns the transaction type and transaction size with the
 	// given transaction hash.
@@ -181,7 +186,6 @@ var eth68 = map[uint64]msgHandler{
 	PooledTransactionsMsg:         handlePooledTransactions,
 }
 
-// TODO-BS Add handler for payload response
 var eth69 = map[uint64]msgHandler{
 	TransactionsMsg:               handleTransactions,
 	NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes,
@@ -194,6 +198,8 @@ var eth69 = map[uint64]msgHandler{
 	GetPooledTransactionsMsg:      handleGetPooledTransactions,
 	PooledTransactionsMsg:         handlePooledTransactions,
 	BlockRangeUpdateMsg:           handleBlockRangeUpdate,
+	GetType3PayloadMsg:            handleGetType3Payload,
+	Type3PayloadMsg:               handleType3Payload,
 }
 
 // handleMessage is invoked whenever an inbound message is received from a remote

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
@@ -58,20 +59,49 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 	// Consume any broadcasts and announces, forwarding the rest to the downloader
 	switch packet := packet.(type) {
 	case *eth.NewPooledTransactionHashesPacket:
-		return h.txFetcher.Notify(peer.ID(), packet.Types, packet.Sizes, packet.Hashes)
+		err := h.txFetcher.Notify(peer.ID(), packet.Types, packet.Sizes, packet.Hashes)
+		if err != nil {
+			return err
+		}
+
+		// Notify blobfetcher arrival of new type3 transactions
+		var hashes []common.Hash
+		var hasPayload []bool
+		for i, hash := range packet.Hashes {
+			if packet.Types[i] == types.BlobTxType {
+				hashes = append(hashes, hash)
+				hasPayload = append(hasPayload, packet.HasPayloads[i])
+			}
+		}
+		if len(packet.Hashes) == 0 {
+			return nil
+		}
+		return h.blobFetcher.Notify(peer.ID(), packet.Hashes, packet.HasPayloads)
 
 	case *eth.TransactionsPacket:
-		for _, tx := range *packet {
+		var hashes []common.Hash
+		var hasPayload []bool
+		for i, tx := range packet.Txs {
 			if tx.Type() == types.BlobTxType {
 				if tx.BlobTxSidecar() != nil {
 					return errors.New("disallowed broadcast full-blob transaction")
 				}
+				hashes = append(hashes, tx.Hash())
+				hasPayload = append(hasPayload, packet.HasPayloads[i])
 			}
 		}
-		if err := h.blobFetcher.Notify(peer.ID(), *packet); err != nil {
+
+		// Check if the transaction is acceptable to the blobpool (txpool)
+		err := h.txFetcher.Enqueue(peer.ID(), packet.Txs, false)
+		if err != nil {
 			return err
 		}
-		return h.txFetcher.Enqueue(peer.ID(), *packet, false)
+
+		if len(hashes) == 0 {
+			return nil
+		}
+		// Notify blobfetcher arrival of new type3 transactions
+		return h.blobFetcher.Notify(peer.ID(), hashes, hasPayload)
 
 	case *eth.PooledTransactionsResponse:
 		// If we receive any blob transactions missing sidecars, or with
@@ -88,6 +118,9 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 			}
 		}
 		return h.txFetcher.Enqueue(peer.ID(), *packet, true)
+
+	case *eth.Type3PayloadResponse:
+		return h.blobFetcher.Enqueue(peer.ID(), packet.Hashes, packet.Sidecars)
 
 	default:
 		return fmt.Errorf("unexpected eth packet type: %T", packet)

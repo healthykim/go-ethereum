@@ -110,6 +110,8 @@ type blobTxMeta struct {
 	evictionExecTip      *uint256.Int // Worst gas tip across all previous nonces
 	evictionExecFeeJumps float64      // Worst base fee (converted to fee jumps) across all previous nonces
 	evictionBlobFeeJumps float64      // Worse blob fee (converted to fee jumps) across all previous nonces
+
+	hasPayload bool // Whether the pool has its payload
 }
 
 // newBlobTxMeta retrieves the indexed metadata fields from a blob transaction
@@ -128,6 +130,7 @@ func newBlobTxMeta(id uint64, size uint64, storageSize uint32, tx *types.Transac
 		blobFeeCap:  uint256.MustFromBig(tx.BlobGasFeeCap()),
 		execGas:     tx.Gas(),
 		blobGas:     tx.BlobGas(),
+		hasPayload:  tx.BlobTxSidecar() != nil,
 	}
 	meta.basefeeJumps = dynamicFeeJumps(meta.execFeeCap)
 	meta.blobfeeJumps = dynamicFeeJumps(meta.blobFeeCap)
@@ -323,6 +326,8 @@ type BlobPool struct {
 	spent  map[common.Address]*uint256.Int  // Expenditure tracking for individual accounts
 	evict  *evictHeap                       // Heap of cheapest accounts for eviction when full
 
+	buffer map[common.Hash]*types.Transaction
+
 	discoverFeed event.Feed // Event feed to send out new tx events on pool discovery (reorg excluded)
 	insertFeed   event.Feed // Event feed to send out new tx events on pool inclusion (reorg included)
 
@@ -349,6 +354,7 @@ func New(config Config, chain BlockChain, hasPendingAuth func(common.Address) bo
 		index:          make(map[common.Address][]*blobTxMeta),
 		spent:          make(map[common.Address]*uint256.Int),
 		txValidationFn: txpool.ValidateTransaction,
+		buffer:         make(map[common.Hash]*types.Transaction),
 	}
 }
 
@@ -1140,6 +1146,7 @@ func (p *BlobPool) checkDelegationLimit(tx *types.Transaction) error {
 
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
+// TODO-BS No blob-specific validation? (e.g. proof verification)
 func (p *BlobPool) validateTx(tx *types.Transaction) error {
 	if err := p.ValidateTxBasics(tx); err != nil {
 		return err
@@ -1278,6 +1285,31 @@ func (p *BlobPool) GetRLP(hash common.Hash) []byte {
 	return p.getRLP(hash)
 }
 
+func (p *BlobPool) GetSidecar(hash common.Hash) *types.BlobTxSidecar {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+
+	// Pull the blob from disk and return an assembled response
+	id, ok := p.lookup.storeidOfTx(hash)
+	if !ok {
+		return nil
+	}
+	data, err := p.store.Get(id)
+
+	if err != nil {
+		log.Error("Tracked blob payload missing from store", "hash", hash, "id", id, "err", err)
+		return nil
+	}
+	item := new(types.Transaction)
+	if err := rlp.DecodeBytes(data, item); err != nil {
+		log.Error("Blobs corrupted for traced transaction",
+			"hash", hash, "id", id, "err", err)
+		return nil
+	}
+
+	return item.BlobTxSidecar()
+}
+
 // GetMetadata returns the transaction type and transaction size with the
 // given transaction hash.
 //
@@ -1291,9 +1323,14 @@ func (p *BlobPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
 	if !ok {
 		return nil
 	}
+	hasPayload, ok := p.lookup.hasPayloadOfTx(hash)
+	if !ok {
+		return nil
+	}
 	return &txpool.TxMetadata{
-		Type: types.BlobTxType,
-		Size: size,
+		Type:       types.BlobTxType,
+		Size:       size,
+		HasPayload: hasPayload,
 	}
 }
 
@@ -1305,6 +1342,7 @@ func (p *BlobPool) GetBlobs(vhashes []common.Hash) []*types.BlobTxSidecar {
 	for idx, vhash := range vhashes {
 		// Retrieve the datastore item (in a short lock)
 		p.lock.RLock()
+		// storeidOfBlob do not return transaction without payload
 		id, exists := p.lookup.storeidOfBlob(vhash)
 		if !exists {
 			p.lock.RUnlock()
@@ -1350,19 +1388,79 @@ func (p *BlobPool) AvailableBlobs(vhashes []common.Hash) int {
 // related to the add is finished. Only use this during tests for determinism.
 func (p *BlobPool) Add(txs []*types.Transaction, sync bool) []error {
 	var (
-		adds = make([]*types.Transaction, 0, len(txs))
-		errs = make([]error, len(txs))
+		errs         = make([]error, len(txs))
+		hashes       = make([]common.Hash, 0)
+		blobSidecars = make([]*types.BlobTxSidecar, 0)
+		indices      = make([]int, 0)
 	)
 	for i, tx := range txs {
-		errs[i] = p.add(tx)
-		if errs[i] == nil {
-			adds = append(adds, tx.WithoutBlobTxSidecar())
+		if _, exists := p.buffer[tx.Hash()]; exists {
+			continue
+		}
+		if tx.BlobTxSidecar() != nil {
+			// direct submission from the sender
+			hashes = append(hashes, tx.Hash())
+			blobSidecars = append(blobSidecars, tx.BlobTxSidecar())
+			indices = append(indices, i)
+		}
+
+		p.buffer[tx.Hash()] = tx
+		// todo(healthykim) add errors
+		// Don't trigger 'add' immediately
+		// Put the transaction into a buffer first, and let reportAvailability trigger the 'add'.
+		// 1) Put into buffer 2) if report returns true, 1. Save it to DB 2. Propagate
+		// todo(healthykim) basic validation logic before the buffer (blob fetcher should only proceed if it passes this validation)
+		// Do not propagate immediately, propagate only after passing verification.
+		// Reasons:
+		// 		1) Risk of wasting bandwidth
+		// 		2) No strong reason to propagate that quickly if it's not used in cell verification (propagation with hasPayload = false would be fast enough)
+		// 		3) If fast propagation is needed, it's more appropriate to improve propagation efficiency itself?
+	}
+
+	if len(hashes) > 0 {
+		directErrs := p.ReportAvailability(hashes, true, blobSidecars)
+		for i, index := range indices {
+			errs[index] = directErrs[i]
 		}
 	}
+
+	return errs
+}
+
+func (p *BlobPool) ReportAvailability(txHashes []common.Hash, available bool, blobSidecars []*types.BlobTxSidecar) []error {
+	errs := make([]error, len(txHashes))
+	adds := make([]*types.Transaction, 0, len(txHashes))
+
+	if !available {
+		// drop
+		for _, hash := range txHashes {
+			delete(p.buffer, hash)
+		}
+		return nil
+	}
+
+	// add blobsidecars to the storage
+	for i, hash := range txHashes {
+		tx, exists := p.buffer[hash]
+		if !exists {
+			errs[i] = core.ErrUnknownBlobTx
+			continue
+		}
+
+		if i < len(blobSidecars) && blobSidecars[i] != nil {
+			tx = tx.WithBlobTxSidecar(blobSidecars[i])
+		}
+		errs[i] = p.add(tx)
+		adds = append(adds, tx.WithoutBlobTxSidecar())
+		delete(p.buffer, hash)
+	}
+
+	// broadcast
 	if len(adds) > 0 {
 		p.discoverFeed.Send(core.NewTxsEvent{Txs: adds})
 		p.insertFeed.Send(core.NewTxsEvent{Txs: adds})
 	}
+
 	return errs
 }
 
@@ -1633,6 +1731,9 @@ func (p *BlobPool) Pending(filter txpool.PendingFilter) map[common.Address][]*tx
 				if tx.blobFeeCap.Lt(filter.BlobFee) {
 					break // blobfee too low, cannot be included, discard rest of txs from the account
 				}
+			}
+			if !filter.IncludeBlobsWithoutPayload && !tx.hasPayload {
+				break
 			}
 			// Transaction was accepted according to the filter, append to the pending list
 			lazies = append(lazies, &txpool.LazyTransaction{

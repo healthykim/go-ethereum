@@ -19,6 +19,7 @@ package eth
 import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/log"
 )
 
 const (
@@ -44,12 +45,28 @@ func (p *Peer) broadcastTransactions() {
 			var (
 				hashesCount uint64
 				txs         []*types.Transaction
+				hasPayloads []bool
 				size        common.StorageSize
 			)
 			for i := 0; i < len(queue) && size < maxTxPacketSize; i++ {
-				if tx := p.txpool.Get(queue[i]); tx != nil {
-					txs = append(txs, tx)
-					size += common.StorageSize(tx.Size())
+				log.Info("Checking tx", "tx", queue[i])
+				meta := p.txpool.GetMetadata(queue[i])
+				tx := p.txpool.Get(queue[i])
+				if meta == nil {
+					log.Info("Meta is nil")
+				}
+				if tx == nil {
+					log.Info("tx is nil")
+				}
+				if tx != nil && meta != nil {
+					txWithoutBlob := tx.WithoutBlobTxSidecar()
+					txs = append(txs, txWithoutBlob)
+					hasPayloads = append(hasPayloads, meta.HasPayload)
+					txSize := common.StorageSize(txWithoutBlob.Size())
+					size += txSize
+					if txSize > maxTxPacketSize {
+						log.Info("Too big tx", "txSize", txSize, "maxTxPacketSize", maxTxPacketSize)
+					}
 				}
 				hashesCount++
 			}
@@ -59,12 +76,13 @@ func (p *Peer) broadcastTransactions() {
 			if len(txs) > 0 {
 				done = make(chan struct{})
 				go func() {
-					if err := p.SendTransactions(txs); err != nil {
+					if err := p.SendTransactions(txs, hasPayloads); err != nil {
+						log.Info("Failed to send tx", "txHash", txs[0].Hash(), "type", txs[0].Type(), "hasPayload", hasPayloads[0])
 						fail <- err
 						return
 					}
 					close(done)
-					p.Log().Trace("Sent transactions", "count", len(txs))
+					p.Log().Info("Sent transactions", "count", len(txs))
 				}()
 			}
 		}
@@ -73,6 +91,7 @@ func (p *Peer) broadcastTransactions() {
 		case hashes := <-p.txBroadcast:
 			// If the connection failed, discard all transaction events
 			if failed {
+				p.Log().Info("Connection Failed")
 				continue
 			}
 			// New batch of transactions to be broadcast, queue them (with cap)
@@ -113,6 +132,7 @@ func (p *Peer) announceTransactions() {
 				pending      []common.Hash
 				pendingTypes []byte
 				pendingSizes []uint32
+				hasPayloads  []bool
 				size         common.StorageSize
 			)
 			for count = 0; count < len(queue) && size < maxTxPacketSize; count++ {
@@ -120,6 +140,7 @@ func (p *Peer) announceTransactions() {
 					pending = append(pending, queue[count])
 					pendingTypes = append(pendingTypes, meta.Type)
 					pendingSizes = append(pendingSizes, uint32(meta.Size))
+					hasPayloads = append(hasPayloads, meta.HasPayload)
 					size += common.HashLength
 				}
 			}
@@ -130,7 +151,7 @@ func (p *Peer) announceTransactions() {
 			if len(pending) > 0 {
 				done = make(chan struct{})
 				go func() {
-					if err := p.sendPooledTransactionHashes(pending, pendingTypes, pendingSizes); err != nil {
+					if err := p.sendPooledTransactionHashes(pending, pendingTypes, pendingSizes, hasPayloads); err != nil {
 						fail <- err
 						return
 					}

@@ -44,7 +44,7 @@ var ProtocolVersions = []uint{ETH69, ETH68}
 
 // protocolLengths are the number of implemented message corresponding to
 // different protocol versions.
-var protocolLengths = map[uint]uint64{ETH68: 17, ETH69: 18}
+var protocolLengths = map[uint]uint64{ETH68: 17, ETH69: 20}
 
 // maxMessageSize is the maximum cap on the size of a protocol message.
 const maxMessageSize = 10 * 1024 * 1024
@@ -64,6 +64,8 @@ const (
 	GetReceiptsMsg                = 0x0f
 	ReceiptsMsg                   = 0x10
 	BlockRangeUpdateMsg           = 0x11
+	GetType3PayloadMsg            = 0x12
+	Type3PayloadMsg               = 0x13
 )
 
 var (
@@ -127,7 +129,10 @@ func (p *NewBlockHashesPacket) Unpack() ([]common.Hash, []uint64) {
 }
 
 // TransactionsPacket is the network packet for broadcasting new transactions.
-type TransactionsPacket []*types.Transaction
+type TransactionsPacket struct {
+	Txs         []*types.Transaction
+	HasPayloads []bool
+}
 
 // GetBlockHeadersRequest represents a block header query.
 type GetBlockHeadersRequest struct {
@@ -293,9 +298,10 @@ type ReceiptsRLPPacket struct {
 
 // NewPooledTransactionHashesPacket represents a transaction announcement packet on eth/68 and newer.
 type NewPooledTransactionHashesPacket struct {
-	Types  []byte
-	Sizes  []uint32
-	Hashes []common.Hash
+	Types       []byte
+	Sizes       []uint32
+	Hashes      []common.Hash
+	HasPayloads []bool
 }
 
 // GetPooledTransactionsRequest represents a transaction query.
@@ -332,6 +338,28 @@ type BlockRangeUpdatePacket struct {
 	EarliestBlock   uint64
 	LatestBlock     uint64
 	LatestBlockHash common.Hash
+}
+
+// GetType3PayloadRequest represents a blob sidecar query.
+type GetType3PayloadRequest []common.Hash
+
+// GetType3PayloadPacket represents a blob sidecar query with request ID wrapping.
+type GetType3PayloadPacket struct {
+	RequestId uint64
+	GetType3PayloadRequest
+}
+
+// Type3PayloadResponse is a response to the GetType3PayloadPacket.
+type Type3PayloadResponse struct {
+	Hashes   []common.Hash
+	Sidecars []*types.BlobTxSidecar
+}
+
+// Type3PayloadPacket is a response to the GetType3PayloadPacket
+// with request ID wrapping.
+type Type3PayloadPacket struct {
+	RequestId uint64
+	Type3PayloadResponse
 }
 
 func (*StatusPacket68) Name() string { return "Status" }
@@ -381,3 +409,9 @@ func (*ReceiptsRLPResponse) Kind() byte   { return ReceiptsMsg }
 
 func (*BlockRangeUpdatePacket) Name() string { return "BlockRangeUpdate" }
 func (*BlockRangeUpdatePacket) Kind() byte   { return BlockRangeUpdateMsg }
+
+func (*GetType3PayloadRequest) Name() string { return "GetType3PayloadRequest" }
+func (*GetType3PayloadRequest) Kind() byte   { return GetType3PayloadMsg }
+
+func (*Type3PayloadResponse) Name() string { return "Type3PayloadResponse" }
+func (*Type3PayloadResponse) Kind() byte   { return Type3PayloadMsg }

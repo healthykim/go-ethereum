@@ -1057,8 +1057,9 @@ func (pool *LegacyPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
 		return nil
 	}
 	return &txpool.TxMetadata{
-		Type: tx.Type(),
-		Size: tx.Size(),
+		Type:       tx.Type(),
+		Size:       tx.Size(),
+		HasPayload: false, // default: false
 	}
 }
 
@@ -1951,4 +1952,14 @@ func (pool *LegacyPool) Clear() {
 // authorizations from the specific address cached in the pool.
 func (pool *LegacyPool) HasPendingAuth(addr common.Address) bool {
 	return pool.all.hasAuth(addr)
+}
+
+func (p *LegacyPool) ReportAvailability(txHashes []common.Hash, available bool, blobSidecars []*types.BlobTxSidecar) []error {
+	// Not supported
+	return nil
+}
+
+func (p *LegacyPool) GetSidecar(hash common.Hash) *types.BlobTxSidecar {
+	// Not supported
+	return nil
 }

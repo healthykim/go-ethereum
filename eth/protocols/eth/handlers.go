@@ -494,7 +494,7 @@ func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
 	if err := msg.Decode(&txs); err != nil {
 		return err
 	}
-	for i, tx := range txs {
+	for i, tx := range txs.Txs {
 		// Validate and mark the remote transaction
 		if tx == nil {
 			return fmt.Errorf("Transactions: transaction %d is nil", i)
@@ -537,4 +537,50 @@ func handleBlockRangeUpdate(backend Backend, msg Decoder, peer *Peer) error {
 	// We don't do anything with these messages for now, just store them on the peer.
 	peer.lastRange.Store(&update)
 	return nil
+}
+
+func handleGetType3Payload(backend Backend, msg Decoder, peer *Peer) error {
+	var query GetType3PayloadPacket
+	if err := msg.Decode(&query); err != nil {
+		return err
+	}
+	hashes, sidecars := answerGetType3Payload(backend, query.GetType3PayloadRequest)
+	return peer.ReplyType3PayloadRLP(query.RequestId, hashes, sidecars)
+}
+
+func answerGetType3Payload(backend Backend, query GetType3PayloadRequest) ([]common.Hash, []*types.BlobTxSidecar) {
+	// Gather transactions until the fetch or network limits is reached
+	var (
+		hashes   []common.Hash
+		sidecars []*types.BlobTxSidecar
+	)
+	for _, hash := range query {
+		if len(sidecars) >= maxPayloadsServe {
+			break
+		}
+		// Retrieve the requested transaction, skipping if unknown to us
+		sidecar := backend.TxPool().GetSidecar(hash)
+		if sidecar == nil {
+			continue
+		}
+		hashes = append(hashes, hash)
+		sidecars = append(sidecars, sidecar)
+	}
+	return hashes, sidecars
+}
+
+func handleType3Payload(backend Backend, msg Decoder, peer *Peer) error {
+	var sidecars Type3PayloadPacket
+	if err := msg.Decode(&sidecars); err != nil {
+		return err
+	}
+	for i, sidecar := range sidecars.Type3PayloadResponse.Sidecars {
+		if sidecar == nil {
+			return fmt.Errorf("Type3Payload: payload %d is nil", i)
+		}
+		//todo(healthykim) prevent getting the same response mulitple times (e.g. markTrasnaction)
+	}
+	requestTracker.Fulfil(peer.id, peer.version, Type3PayloadMsg, sidecars.RequestId)
+
+	return backend.Handle(peer, &sidecars.Type3PayloadResponse)
 }

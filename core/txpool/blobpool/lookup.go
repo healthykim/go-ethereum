@@ -21,8 +21,9 @@ import (
 )
 
 type txMetadata struct {
-	id   uint64 // the billy id of transction
-	size uint64 // the RLP encoded size of transaction (blobs are included)
+	id         uint64 // the billy id of transction
+	size       uint64 // the RLP encoded size of transaction (blobs are excluded)
+	hasPayload bool
 }
 
 // lookup maps blob versioned hashes to transaction hashes that include them,
@@ -63,8 +64,11 @@ func (l *lookup) storeidOfBlob(vhash common.Hash) (uint64, bool) {
 	if !ok {
 		return 0, false
 	}
-	// If the blob is known, return any tx for it
+	// If the blob is known and we have payload of that, return any tx for it
 	for tx := range txs {
+		if hasPayload, _ := l.hasPayloadOfTx(tx); !hasPayload {
+			continue
+		}
 		return l.storeidOfTx(tx)
 	}
 	return 0, false // Weird, don't choke
@@ -79,6 +83,14 @@ func (l *lookup) sizeOfTx(txhash common.Hash) (uint64, bool) {
 	return meta.size, true
 }
 
+func (l *lookup) hasPayloadOfTx(txhash common.Hash) (bool, bool) {
+	meta, ok := l.txIndex[txhash]
+	if !ok {
+		return false, false
+	}
+	return meta.hasPayload, true
+}
+
 // track inserts a new set of mappings from blob versioned hashes to transaction
 // hashes; and from transaction hashes to datastore storage item ids.
 func (l *lookup) track(tx *blobTxMeta) {
@@ -91,8 +103,9 @@ func (l *lookup) track(tx *blobTxMeta) {
 	}
 	// Map the transaction hash to the datastore id and RLP-encoded transaction size
 	l.txIndex[tx.hash] = &txMetadata{
-		id:   tx.id,
-		size: tx.size,
+		id:         tx.id,
+		size:       tx.size,
+		hasPayload: tx.hasPayload,
 	}
 }
 

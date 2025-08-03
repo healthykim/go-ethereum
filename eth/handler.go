@@ -91,6 +91,10 @@ type txPool interface {
 	// can decide whether to receive notifications only for newly seen transactions
 	// or also for reorged out ones.
 	SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) event.Subscription
+
+	ReportAvailability(txHashes []common.Hash, available bool, blobSidecars []*types.BlobTxSidecar) []error
+
+	GetSidecar(hash common.Hash) *types.BlobTxSidecar
 }
 
 // handlerConfig is the collection of initialization parameters to create a full
@@ -204,7 +208,24 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	addTxs := func(txs []*types.Transaction) []error {
 		return h.txpool.Add(txs, false)
 	}
+
+	hasPayload := func(hash common.Hash) bool {
+		meta := h.txpool.GetMetadata(hash)
+		if meta != nil {
+			return meta.HasPayload
+		}
+		return false
+	}
+
+	fetchPayload := func(peer string, hashes []common.Hash) error {
+		p := h.peers.peer(peer)
+		if p == nil {
+			return errors.New("unknown peer")
+		}
+		return p.RequestPayloads(hashes)
+	}
 	h.txFetcher = fetcher.NewTxFetcher(h.txpool.Has, addTxs, fetchTx, h.removePeer)
+	h.blobFetcher = fetcher.NewBlobFetcher(h.txpool.Has, hasPayload, h.txpool.ReportAvailability, fetchPayload, h.removePeer)
 	return h, nil
 }
 
@@ -439,6 +460,7 @@ func (h *handler) Start(maxPeers int) {
 
 	// start sync handlers
 	h.txFetcher.Start()
+	h.blobFetcher.Start()
 
 	// start peer handler tracker
 	h.wg.Add(1)
@@ -471,8 +493,9 @@ func (h *handler) Stop() {
 // already have the given transaction.
 func (h *handler) BroadcastTransactions(txs types.Transactions) {
 	var (
-		blobTxs  int // Number of blob transactions to announce only
-		largeTxs int // Number of large transactions to announce only
+		blobToAnnounce int // Number of blob transactions to announce
+		blobToDirect   int // Number of blob transactions to send directly to peers
+		largeTxs       int // Number of large transactions to announce only
 
 		directCount int // Number of transactions sent directly to peers (duplicates included)
 		annCount    int // Number of transactions announced across all peers (duplicates included)
@@ -495,8 +518,6 @@ func (h *handler) BroadcastTransactions(txs types.Transactions) {
 	for _, tx := range txs {
 		var maybeDirect bool
 		switch {
-		case tx.Type() == types.BlobTxType:
-			blobTxs++
 		case tx.Size() > txMaxBroadcastSize:
 			largeTxs++
 		default:
@@ -525,8 +546,14 @@ func (h *handler) BroadcastTransactions(txs types.Transactions) {
 				}
 			}
 			if broadcast {
+				if tx.Type() == types.BlobTxType {
+					blobToDirect++
+				}
 				txset[peer] = append(txset[peer], tx.Hash())
 			} else {
+				if tx.Type() == types.BlobTxType {
+					blobToAnnounce++
+				}
 				annos[peer] = append(annos[peer], tx.Hash())
 			}
 		}
@@ -539,7 +566,8 @@ func (h *handler) BroadcastTransactions(txs types.Transactions) {
 		annCount += len(hashes)
 		peer.AsyncSendPooledTransactionHashes(hashes)
 	}
-	log.Debug("Distributed transactions", "plaintxs", len(txs)-blobTxs-largeTxs, "blobtxs", blobTxs, "largetxs", largeTxs,
+	log.Debug("Distributed transactions", "plaintxs", len(txs)-largeTxs, "largetxs", largeTxs,
+		"blobToDirect", blobToDirect, "blobToAnnounce", blobToAnnounce,
 		"bcastpeers", len(txset), "bcastcount", directCount, "annpeers", len(annos), "anncount", annCount)
 }
 

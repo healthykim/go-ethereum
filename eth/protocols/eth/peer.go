@@ -131,12 +131,12 @@ func (p *Peer) markTransaction(hash common.Hash) {
 //
 // The reasons this is public is to allow packages using this protocol to write
 // tests that directly send messages without having to do the async queueing.
-func (p *Peer) SendTransactions(txs types.Transactions) error {
+func (p *Peer) SendTransactions(txs types.Transactions, hasPayloads []bool) error {
 	// Mark all the transactions as known, but ensure we don't overflow our limits
 	for _, tx := range txs {
 		p.knownTxs.Add(tx.Hash())
 	}
-	return p2p.Send(p.rw, TransactionsMsg, txs)
+	return p2p.Send(p.rw, TransactionsMsg, TransactionsPacket{Txs: txs, HasPayloads: hasPayloads})
 }
 
 // AsyncSendTransactions queues a list of transactions (by hash) to eventually
@@ -159,10 +159,10 @@ func (p *Peer) AsyncSendTransactions(hashes []common.Hash) {
 // This method is a helper used by the async transaction announcer. Don't call it
 // directly as the queueing (memory) and transmission (bandwidth) costs should
 // not be managed directly.
-func (p *Peer) sendPooledTransactionHashes(hashes []common.Hash, types []byte, sizes []uint32) error {
+func (p *Peer) sendPooledTransactionHashes(hashes []common.Hash, types []byte, sizes []uint32, hasPayloads []bool) error {
 	// Mark all the transactions as known, but ensure we don't overflow our limits
 	p.knownTxs.Add(hashes...)
-	return p2p.Send(p.rw, NewPooledTransactionHashesMsg, NewPooledTransactionHashesPacket{Types: types, Sizes: sizes, Hashes: hashes})
+	return p2p.Send(p.rw, NewPooledTransactionHashesMsg, NewPooledTransactionHashesPacket{Types: types, Sizes: sizes, Hashes: hashes, HasPayloads: hasPayloads})
 }
 
 // AsyncSendPooledTransactionHashes queues a list of transactions hashes to eventually
@@ -348,6 +348,31 @@ func (p *Peer) RequestTxs(hashes []common.Hash) error {
 	return p2p.Send(p.rw, GetPooledTransactionsMsg, &GetPooledTransactionsPacket{
 		RequestId:                    id,
 		GetPooledTransactionsRequest: hashes,
+	})
+}
+
+func (p *Peer) RequestPayloads(hashes []common.Hash) error {
+	p.Log().Debug("Fetching batch of payloads", "count", len(hashes))
+	id := rand.Uint64()
+
+	requestTracker.Track(p.id, p.version, GetType3PayloadMsg, Type3PayloadMsg, id)
+	return p2p.Send(p.rw, GetType3PayloadMsg, &GetType3PayloadPacket{
+		RequestId:              id,
+		GetType3PayloadRequest: hashes,
+	})
+}
+
+// ReplyType3PayloadRLP is the response to RequestPayloads.
+func (p *Peer) ReplyType3PayloadRLP(id uint64, hashes []common.Hash, sidecars []*types.BlobTxSidecar) error {
+	// Mark all the transactions as known, but ensure we don't overflow our limits
+	p.knownTxs.Add(hashes...)
+
+	return p2p.Send(p.rw, Type3PayloadMsg, &Type3PayloadPacket{
+		RequestId: id,
+		Type3PayloadResponse: Type3PayloadResponse{
+			Hashes:   hashes,
+			Sidecars: sidecars,
+		},
 	})
 }
 

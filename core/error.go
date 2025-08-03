@@ -122,6 +122,9 @@ var (
 	// Message validation errors:
 	ErrEmptyAuthList   = errors.New("EIP-7702 transaction with empty auth list")
 	ErrSetCodeTxCreate = errors.New("EIP-7702 transaction cannot be used to create contract")
+
+	// ErrUnknownBlobTx is returned if a blob transaction is not seen by the blobpool
+	ErrUnknownBlobTx = errors.New("blob transaction is unknown to buffer")
 )
 
 // EIP-7702 state transition errors.

@@ -79,12 +79,15 @@ type PendingFilter struct {
 
 	OnlyPlainTxs bool // Return only plain EVM transactions (peer-join announces, block space filling)
 	OnlyBlobTxs  bool // Return only blob transactions (block blob-space filling)
+
+	IncludeBlobsWithoutPayload bool
 }
 
 // TxMetadata denotes the metadata of a transaction.
 type TxMetadata struct {
-	Type uint8  // The type of the transaction
-	Size uint64 // The length of the 'rlp encoding' of a transaction
+	Type       uint8  // The type of the transaction
+	Size       uint64 // The length of the 'rlp encoding' of a transaction
+	HasPayload bool
 }
 
 // SubPool represents a specialized transaction pool that lives on its own (e.g.
@@ -177,4 +180,8 @@ type SubPool interface {
 
 	// Clear removes all tracked transactions from the pool
 	Clear()
+
+	ReportAvailability(txHashes []common.Hash, available bool, blobSidecars []*types.BlobTxSidecar) []error
+
+	GetSidecar(hash common.Hash) *types.BlobTxSidecar
 }
