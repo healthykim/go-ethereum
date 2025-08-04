@@ -102,6 +102,8 @@ var caps = []string{
 	"engine_getBlobsV2",
 	"engine_getBlobsToStage",
 	"engine_notifyPrediction",
+	"engine_changeBlobpoolMode",
+	"engine_cellVerification",
 	"engine_newPayloadV1",
 	"engine_newPayloadV2",
 	"engine_newPayloadV3",
@@ -440,6 +442,23 @@ func (api *ConsensusAPI) NotifyPrediction(headBlockRoot common.Hash, clMaxPredic
 	return engine.PredictionResponse{
 		PredictionID: &predictionID,
 	}, nil
+}
+
+// Eager mode - Fetch every blob tx arriving from the time this method is called
+// Duration by ms
+func (api *ConsensusAPI) ChangeBlobpoolMode(eager bool, duration uint16) {
+	if eager {
+		api.eth.BlobTxPool().SwitchToEager(duration)
+	}
+}
+
+func (api *ConsensusAPI) CellVerification(hashes []common.Hash) engine.VerificationResponse {
+
+	exists := api.eth.BlobTxPool().Verify(hashes)
+
+	return engine.VerificationResponse{
+		VerificationResult: exists,
+	}
 }
 
 // ExchangeTransitionConfigurationV1 checks the given configuration against

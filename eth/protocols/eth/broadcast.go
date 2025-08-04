@@ -19,7 +19,6 @@ package eth
 import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/log"
 )
 
 const (
@@ -49,24 +48,14 @@ func (p *Peer) broadcastTransactions() {
 				size        common.StorageSize
 			)
 			for i := 0; i < len(queue) && size < maxTxPacketSize; i++ {
-				log.Info("Checking tx", "tx", queue[i])
 				meta := p.txpool.GetMetadata(queue[i])
 				tx := p.txpool.Get(queue[i])
-				if meta == nil {
-					log.Info("Meta is nil")
-				}
-				if tx == nil {
-					log.Info("tx is nil")
-				}
 				if tx != nil && meta != nil {
 					txWithoutBlob := tx.WithoutBlobTxSidecar()
 					txs = append(txs, txWithoutBlob)
 					hasPayloads = append(hasPayloads, meta.HasPayload)
 					txSize := common.StorageSize(txWithoutBlob.Size())
 					size += txSize
-					if txSize > maxTxPacketSize {
-						log.Info("Too big tx", "txSize", txSize, "maxTxPacketSize", maxTxPacketSize)
-					}
 				}
 				hashesCount++
 			}
@@ -77,12 +66,10 @@ func (p *Peer) broadcastTransactions() {
 				done = make(chan struct{})
 				go func() {
 					if err := p.SendTransactions(txs, hasPayloads); err != nil {
-						log.Info("Failed to send tx", "txHash", txs[0].Hash(), "type", txs[0].Type(), "hasPayload", hasPayloads[0])
 						fail <- err
 						return
 					}
 					close(done)
-					p.Log().Info("Sent transactions", "count", len(txs))
 				}()
 			}
 		}

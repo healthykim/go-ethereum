@@ -95,6 +95,8 @@ type txPool interface {
 	ReportAvailability(txHashes []common.Hash, available bool, blobSidecars []*types.BlobTxSidecar) []error
 
 	GetSidecar(hash common.Hash) *types.BlobTxSidecar
+
+	ShouldPull(hash common.Hash) bool
 }
 
 // handlerConfig is the collection of initialization parameters to create a full
@@ -225,7 +227,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		return p.RequestPayloads(hashes)
 	}
 	h.txFetcher = fetcher.NewTxFetcher(h.txpool.Has, addTxs, fetchTx, h.removePeer)
-	h.blobFetcher = fetcher.NewBlobFetcher(h.txpool.Has, hasPayload, h.txpool.ReportAvailability, fetchPayload, h.removePeer)
+	h.blobFetcher = fetcher.NewBlobFetcher(h.txpool.Has, hasPayload, h.txpool.ReportAvailability, fetchPayload, h.removePeer, h.txpool.ShouldPull)
 	return h, nil
 }
 

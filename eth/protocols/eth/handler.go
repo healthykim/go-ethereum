@@ -100,6 +100,8 @@ type TxPool interface {
 	// GetMetadata returns the transaction type and transaction size with the
 	// given transaction hash.
 	GetMetadata(hash common.Hash) *txpool.TxMetadata
+
+	ShouldPull(hash common.Hash) bool
 }
 
 // MakeProtocols constructs the P2P protocol definitions for `eth`.

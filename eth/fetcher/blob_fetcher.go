@@ -2,7 +2,6 @@ package fetcher
 
 import (
 	"fmt"
-	"math/rand"
 	mrand "math/rand"
 	"sort"
 	"time"
@@ -93,6 +92,7 @@ type BlobFetcher struct {
 	reportAvailability func([]common.Hash, bool, []*types.BlobTxSidecar) []error
 	fetchPayloads      func(string, []common.Hash) error
 	dropPeer           func(string)
+	shouldPull         func(common.Hash) bool
 
 	// todo(healthykim) add tests
 	step     chan struct{}    // Notification channel when the fetcher loop iterates
@@ -104,7 +104,8 @@ type BlobFetcher struct {
 func NewBlobFetcher(
 	hasTx func(common.Hash) bool, hasPayload func(common.Hash) bool,
 	reportAvailability func([]common.Hash, bool, []*types.BlobTxSidecar) []error,
-	fetchPayloads func(string, []common.Hash) error, dropPeer func(string)) *BlobFetcher {
+	fetchPayloads func(string, []common.Hash) error, dropPeer func(string),
+	shouldPull func(common.Hash) bool) *BlobFetcher {
 	return &BlobFetcher{
 		notify:             make(chan *blobTxAnnounce),
 		cleanup:            make(chan *payloadDelivery),
@@ -126,6 +127,7 @@ func NewBlobFetcher(
 		reportAvailability: reportAvailability,
 		fetchPayloads:      fetchPayloads,
 		dropPeer:           dropPeer,
+		shouldPull:         shouldPull,
 		clock:              mclock.System{},
 		realTime:           time.Now,
 		rand:               nil,
@@ -337,13 +339,7 @@ func (f *BlobFetcher) loop() {
 
 				// For transactions unknown to the blobFetcher:
 				// Randomly decide whether to pull (15%) or not pull (85%) the payload
-				// TODO-BS Use f.rand
-				if rand.New(rand.NewSource(time.Now().UnixNano())).Intn(100) < 15 {
-					// New transaction, decided as not pull
-					// Add to waitlist with the peer
-					f.waitlist[hash] = map[string]struct{}{ann.origin: {}}
-					f.waittime[hash] = f.clock.Now()
-				} else {
+				if f.shouldPull(hash) {
 					// New transaction, decided as pull
 					// Add to announces queue with the peer
 					f.announced[hash] = map[string]struct{}{ann.origin: {}}
@@ -351,6 +347,11 @@ func (f *BlobFetcher) loop() {
 						f.announces[ann.origin] = make(map[common.Hash]uint64)
 					}
 					f.announces[ann.origin][hash] = nextSeq()
+				} else {
+					// New transaction, decided as not pull
+					// Add to waitlist with the peer
+					f.waitlist[hash] = map[string]struct{}{ann.origin: {}}
+					f.waittime[hash] = f.clock.Now()
 				}
 			}
 
@@ -364,9 +365,7 @@ func (f *BlobFetcher) loop() {
 					// Skip if transaction status is already decided
 					continue
 				}
-				// For transactions unknown to the blobFetcher,
-				// randomly decide whether to pull (15%) or not pull (85%)
-				if rand.New(rand.NewSource(time.Now().UnixNano())).Intn(100) < 15 {
+				if f.shouldPull(hash) {
 					// New transaction & decided as pull -> add to peerwait queue
 					f.peerwait[hash] = struct{}{}
 					if f.seenby[ann.origin] == nil {

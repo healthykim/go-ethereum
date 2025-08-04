@@ -313,6 +313,17 @@ func (p *TxPool) GetSidecar(hash common.Hash) *types.BlobTxSidecar {
 	return nil
 }
 
+func (p *TxPool) ShouldPull(hash common.Hash) bool {
+	// todo(healthykim) refactor
+	for _, subpool := range p.subpools {
+		if subpool.ShouldPull(hash) {
+			// legacypool always returns false
+			return true
+		}
+	}
+	return false
+}
+
 // Get returns a transaction if it is contained in the pool, or nil otherwise.
 func (p *TxPool) Get(hash common.Hash) *types.Transaction {
 	for _, subpool := range p.subpools {

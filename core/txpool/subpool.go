@@ -80,7 +80,7 @@ type PendingFilter struct {
 	OnlyPlainTxs bool // Return only plain EVM transactions (peer-join announces, block space filling)
 	OnlyBlobTxs  bool // Return only blob transactions (block blob-space filling)
 
-	IncludeBlobsWithoutPayload bool
+	Prediction bool
 }
 
 // TxMetadata denotes the metadata of a transaction.
@@ -184,4 +184,6 @@ type SubPool interface {
 	ReportAvailability(txHashes []common.Hash, available bool, blobSidecars []*types.BlobTxSidecar) []error
 
 	GetSidecar(hash common.Hash) *types.BlobTxSidecar
+
+	ShouldPull(hash common.Hash) bool
 }

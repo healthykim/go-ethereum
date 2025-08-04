@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -326,7 +327,10 @@ type BlobPool struct {
 	spent  map[common.Address]*uint256.Int  // Expenditure tracking for individual accounts
 	evict  *evictHeap                       // Heap of cheapest accounts for eviction when full
 
-	buffer map[common.Hash]*types.Transaction
+	buffer          map[common.Hash]*types.Transaction
+	verifyRequested map[common.Hash]struct{}
+	eager           bool
+	eagerUntil      time.Time
 
 	discoverFeed event.Feed // Event feed to send out new tx events on pool discovery (reorg excluded)
 	insertFeed   event.Feed // Event feed to send out new tx events on pool inclusion (reorg included)
@@ -343,18 +347,20 @@ type BlobPool struct {
 func New(config Config, chain BlockChain, hasPendingAuth func(common.Address) bool) *BlobPool {
 	// Sanitize the input to ensure no vulnerable gas prices are set
 	config = (&config).sanitize()
+	rand.Seed(time.Now().UnixNano())
 
 	// Create the transaction pool with its initial settings
 	return &BlobPool{
-		config:         config,
-		hasPendingAuth: hasPendingAuth,
-		signer:         types.LatestSigner(chain.Config()),
-		chain:          chain,
-		lookup:         newLookup(),
-		index:          make(map[common.Address][]*blobTxMeta),
-		spent:          make(map[common.Address]*uint256.Int),
-		txValidationFn: txpool.ValidateTransaction,
-		buffer:         make(map[common.Hash]*types.Transaction),
+		config:          config,
+		hasPendingAuth:  hasPendingAuth,
+		signer:          types.LatestSigner(chain.Config()),
+		chain:           chain,
+		lookup:          newLookup(),
+		index:           make(map[common.Address][]*blobTxMeta),
+		spent:           make(map[common.Address]*uint256.Int),
+		txValidationFn:  txpool.ValidateTransaction,
+		buffer:          make(map[common.Hash]*types.Transaction),
+		verifyRequested: make(map[common.Hash]struct{}),
 	}
 }
 
@@ -1229,6 +1235,11 @@ func (p *BlobPool) validateTx(tx *types.Transaction) error {
 	return nil
 }
 
+func (p *BlobPool) SwitchToEager(duration uint16) {
+	p.eager = true
+	p.eagerUntil = time.Now().Add(time.Duration(duration) * time.Millisecond)
+}
+
 // Has returns an indicator whether subpool has a transaction cached with the
 // given hash.
 func (p *BlobPool) Has(hash common.Hash) bool {
@@ -1236,6 +1247,20 @@ func (p *BlobPool) Has(hash common.Hash) bool {
 	defer p.lock.RUnlock()
 
 	return p.lookup.exists(hash)
+}
+
+// For cell verification API (CellVerification)
+func (p *BlobPool) Verify(hashes []common.Hash) []bool {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+
+	result := make([]bool, len(hashes))
+	for i, hash := range hashes {
+		result[i] = p.lookup.exists(hash)
+		p.verifyRequested[hash] = struct{}{}
+	}
+
+	return result
 }
 
 func (p *BlobPool) getRLP(hash common.Hash) []byte {
@@ -1308,6 +1333,21 @@ func (p *BlobPool) GetSidecar(hash common.Hash) *types.BlobTxSidecar {
 	}
 
 	return item.BlobTxSidecar()
+}
+
+func (p *BlobPool) ShouldPull(hash common.Hash) bool {
+	if p.eager {
+		if p.eagerUntil.Before(time.Now()) {
+			p.eager = false
+			return false
+		}
+		return true
+	}
+	if rand.Intn(100) < 15 {
+		return true
+	} else {
+		return false
+	}
 }
 
 // GetMetadata returns the transaction type and transaction size with the
@@ -1732,7 +1772,11 @@ func (p *BlobPool) Pending(filter txpool.PendingFilter) map[common.Address][]*tx
 					break // blobfee too low, cannot be included, discard rest of txs from the account
 				}
 			}
-			if !filter.IncludeBlobsWithoutPayload && !tx.hasPayload {
+			if !tx.hasPayload {
+				break
+			}
+			if _, requested := p.verifyRequested[tx.hash]; requested && filter.Prediction {
+				// Might be already staged
 				break
 			}
 			// Transaction was accepted according to the filter, append to the pending list

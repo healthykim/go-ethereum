@@ -184,7 +184,7 @@ func (b *PayloadID) UnmarshalText(input []byte) error {
 	return nil
 }
 
-// PayloadID is an identifier of the blob prediction process
+// PredictionID is an identifier of the blob prediction process
 type PredictionID [8]byte
 
 func (b PredictionID) String() string {
@@ -201,6 +201,10 @@ func (b *PredictionID) UnmarshalText(input []byte) error {
 		return fmt.Errorf("invalid prediction id %q: %w", input, err)
 	}
 	return nil
+}
+
+type VerificationResponse struct {
+	VerificationResult []bool `json:"verificationResult"`
 }
 
 type ForkChoiceResponse struct {

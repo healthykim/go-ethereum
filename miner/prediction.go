@@ -76,7 +76,8 @@ func (miner *Miner) fillBlobs(blobId engine.PredictionID, max uint8, W uint8, ti
 
 	// Assume that other miners also have similar tip(minimum gas price) value
 	filter := txpool.PendingFilter{
-		MinTip: uint256.MustFromBig(tip),
+		MinTip:     uint256.MustFromBig(tip),
+		Prediction: true,
 	}
 	// Predict base fee under the assumption that market will go down as much as possible
 	predictedBaseFee := eip1559.CalcBaseFee(miner.chainConfig, parent)

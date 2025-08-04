@@ -1963,3 +1963,8 @@ func (p *LegacyPool) GetSidecar(hash common.Hash) *types.BlobTxSidecar {
 	// Not supported
 	return nil
 }
+
+func (p *LegacyPool) ShouldPull(hash common.Hash) bool {
+	// Not supported
+	return false
+}
