@@ -539,16 +539,16 @@ func handleBlockRangeUpdate(backend Backend, msg Decoder, peer *Peer) error {
 	return nil
 }
 
-func handleGetType3Payload(backend Backend, msg Decoder, peer *Peer) error {
-	var query GetType3PayloadPacket
+func handleGetTransactionPayload(backend Backend, msg Decoder, peer *Peer) error {
+	var query GetTransactionPayloadPacket
 	if err := msg.Decode(&query); err != nil {
 		return err
 	}
-	hashes, sidecars := answerGetType3Payload(backend, query.GetType3PayloadRequest)
-	return peer.ReplyType3PayloadRLP(query.RequestId, hashes, sidecars)
+	hashes, sidecars := answerGetTransactionPayload(backend, query.GetTransactionPayloadRequest)
+	return peer.ReplyTransactionPayloadRLP(query.RequestId, hashes, sidecars)
 }
 
-func answerGetType3Payload(backend Backend, query GetType3PayloadRequest) ([]common.Hash, []*types.BlobTxSidecar) {
+func answerGetTransactionPayload(backend Backend, query GetTransactionPayloadRequest) ([]common.Hash, []*types.BlobTxSidecar) {
 	// Gather transactions until the fetch or network limits is reached
 	var (
 		hashes   []common.Hash
@@ -569,18 +569,18 @@ func answerGetType3Payload(backend Backend, query GetType3PayloadRequest) ([]com
 	return hashes, sidecars
 }
 
-func handleType3Payload(backend Backend, msg Decoder, peer *Peer) error {
-	var sidecars Type3PayloadPacket
+func handleTransactionPayload(backend Backend, msg Decoder, peer *Peer) error {
+	var sidecars TransactionPayloadPacket
 	if err := msg.Decode(&sidecars); err != nil {
 		return err
 	}
-	for i, sidecar := range sidecars.Type3PayloadResponse.Sidecars {
+	for i, sidecar := range sidecars.TransactionPayloadResponse.Sidecars {
 		if sidecar == nil {
-			return fmt.Errorf("Type3Payload: payload %d is nil", i)
+			return fmt.Errorf("TransactionPayload: payload %d is nil", i)
 		}
 		//todo(healthykim) prevent getting the same response mulitple times (e.g. markTrasnaction)
 	}
-	requestTracker.Fulfil(peer.id, peer.version, Type3PayloadMsg, sidecars.RequestId)
+	requestTracker.Fulfil(peer.id, peer.version, TransactionPayloadMsg, sidecars.RequestId)
 
-	return backend.Handle(peer, &sidecars.Type3PayloadResponse)
+	return backend.Handle(peer, &sidecars.TransactionPayloadResponse)
 }

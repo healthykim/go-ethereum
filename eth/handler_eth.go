@@ -119,7 +119,7 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		}
 		return h.txFetcher.Enqueue(peer.ID(), *packet, true)
 
-	case *eth.Type3PayloadResponse:
+	case *eth.TransactionPayloadResponse:
 		return h.blobFetcher.Enqueue(peer.ID(), packet.Hashes, packet.Sidecars)
 
 	default:

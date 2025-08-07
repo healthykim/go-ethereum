@@ -64,8 +64,8 @@ const (
 	GetReceiptsMsg                = 0x0f
 	ReceiptsMsg                   = 0x10
 	BlockRangeUpdateMsg           = 0x11
-	GetType3PayloadMsg            = 0x12
-	Type3PayloadMsg               = 0x13
+	GetTransactionPayloadMsg      = 0x12
+	TransactionPayloadMsg         = 0x13
 )
 
 var (
@@ -340,26 +340,26 @@ type BlockRangeUpdatePacket struct {
 	LatestBlockHash common.Hash
 }
 
-// GetType3PayloadRequest represents a blob sidecar query.
-type GetType3PayloadRequest []common.Hash
+// GetTransactionPayloadRequest represents a blob sidecar query.
+type GetTransactionPayloadRequest []common.Hash
 
-// GetType3PayloadPacket represents a blob sidecar query with request ID wrapping.
-type GetType3PayloadPacket struct {
+// GetTransactionPayloadPacket represents a blob sidecar query with request ID wrapping.
+type GetTransactionPayloadPacket struct {
 	RequestId uint64
-	GetType3PayloadRequest
+	GetTransactionPayloadRequest
 }
 
-// Type3PayloadResponse is a response to the GetType3PayloadPacket.
-type Type3PayloadResponse struct {
+// TransactionPayloadResponse is a response to the GetTransactionPayloadPacket.
+type TransactionPayloadResponse struct {
 	Hashes   []common.Hash
 	Sidecars []*types.BlobTxSidecar
 }
 
-// Type3PayloadPacket is a response to the GetType3PayloadPacket
+// TransactionPayloadPacket is a response to the GetTransactionPayloadPacket
 // with request ID wrapping.
-type Type3PayloadPacket struct {
+type TransactionPayloadPacket struct {
 	RequestId uint64
-	Type3PayloadResponse
+	TransactionPayloadResponse
 }
 
 func (*StatusPacket68) Name() string { return "Status" }
@@ -410,8 +410,8 @@ func (*ReceiptsRLPResponse) Kind() byte   { return ReceiptsMsg }
 func (*BlockRangeUpdatePacket) Name() string { return "BlockRangeUpdate" }
 func (*BlockRangeUpdatePacket) Kind() byte   { return BlockRangeUpdateMsg }
 
-func (*GetType3PayloadRequest) Name() string { return "GetType3PayloadRequest" }
-func (*GetType3PayloadRequest) Kind() byte   { return GetType3PayloadMsg }
+func (*GetTransactionPayloadRequest) Name() string { return "GetTransactionPayloadRequest" }
+func (*GetTransactionPayloadRequest) Kind() byte   { return GetTransactionPayloadMsg }
 
-func (*Type3PayloadResponse) Name() string { return "Type3PayloadResponse" }
-func (*Type3PayloadResponse) Kind() byte   { return Type3PayloadMsg }
+func (*TransactionPayloadResponse) Name() string { return "TransactionPayloadResponse" }
+func (*TransactionPayloadResponse) Kind() byte   { return TransactionPayloadMsg }

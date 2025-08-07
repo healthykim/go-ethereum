@@ -1446,15 +1446,7 @@ func (p *BlobPool) Add(txs []*types.Transaction, sync bool) []error {
 
 		p.buffer[tx.Hash()] = tx
 		// todo(healthykim) add errors
-		// Don't trigger 'add' immediately
-		// Put the transaction into a buffer first, and let reportAvailability trigger the 'add'.
-		// 1) Put into buffer 2) if report returns true, 1. Save it to DB 2. Propagate
 		// todo(healthykim) basic validation logic before the buffer (blob fetcher should only proceed if it passes this validation)
-		// Do not propagate immediately, propagate only after passing verification.
-		// Reasons:
-		// 		1) Risk of wasting bandwidth
-		// 		2) No strong reason to propagate that quickly if it's not used in cell verification (propagation with hasPayload = false would be fast enough)
-		// 		3) If fast propagation is needed, it's more appropriate to improve propagation efficiency itself?
 	}
 
 	if len(hashes) > 0 {

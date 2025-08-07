@@ -355,21 +355,21 @@ func (p *Peer) RequestPayloads(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of payloads", "count", len(hashes))
 	id := rand.Uint64()
 
-	requestTracker.Track(p.id, p.version, GetType3PayloadMsg, Type3PayloadMsg, id)
-	return p2p.Send(p.rw, GetType3PayloadMsg, &GetType3PayloadPacket{
-		RequestId:              id,
-		GetType3PayloadRequest: hashes,
+	requestTracker.Track(p.id, p.version, GetTransactionPayloadMsg, TransactionPayloadMsg, id)
+	return p2p.Send(p.rw, GetTransactionPayloadMsg, &GetTransactionPayloadPacket{
+		RequestId:                    id,
+		GetTransactionPayloadRequest: hashes,
 	})
 }
 
-// ReplyType3PayloadRLP is the response to RequestPayloads.
-func (p *Peer) ReplyType3PayloadRLP(id uint64, hashes []common.Hash, sidecars []*types.BlobTxSidecar) error {
+// ReplyTransactionPayload is the response to RequestPayloads.
+func (p *Peer) ReplyTransactionPayload(id uint64, hashes []common.Hash, sidecars []*types.BlobTxSidecar) error {
 	// Mark all the transactions as known, but ensure we don't overflow our limits
 	p.knownTxs.Add(hashes...)
 
-	return p2p.Send(p.rw, Type3PayloadMsg, &Type3PayloadPacket{
+	return p2p.Send(p.rw, TransactionPayloadMsg, &TransactionPayloadPacket{
 		RequestId: id,
-		Type3PayloadResponse: Type3PayloadResponse{
+		TransactionPayloadResponse: TransactionPayloadResponse{
 			Hashes:   hashes,
 			Sidecars: sidecars,
 		},
