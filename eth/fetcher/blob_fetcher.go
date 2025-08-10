@@ -20,7 +20,7 @@ type status int
 
 const (
 	AvailabilityThreshold = 1
-	// TODO(healthykim): should we limit to one blob transaction per fetch?
+	// TODO(healthykim): should we limit the maximum payload size to fetch
 	maxPayloadRetrievalSize = 128 * 1024
 	maxPayloadRetrievals    = 1
 	// todo(heatlhykim)
@@ -94,7 +94,6 @@ type BlobFetcher struct {
 	dropPeer           func(string)
 	shouldPull         func(common.Hash) bool
 
-	// todo(healthykim) add tests
 	step     chan struct{}    // Notification channel when the fetcher loop iterates
 	clock    mclock.Clock     // Monotonic clock or simulated clock for tests
 	realTime func() time.Time // Real system time or simulated time for tests
@@ -172,8 +171,6 @@ func (f *BlobFetcher) Notify(peer string, hashes []common.Hash, hasPayload []boo
 // This is triggered by ethHandler upon receiving direct request responses.
 // Note: blob payloads are never received via broadcast.
 func (f *BlobFetcher) Enqueue(peer string, hashes []common.Hash, payloads []*types.BlobTxSidecar) error {
-	//TODO-BS Packet for hashes + payloads
-
 	// We don't need metadata for cleanup because:
 	// 1. Size check: Each blob sidecar element has a fixed size.
 	//    Misssized data from a peer would be rejected during deserialization.
@@ -230,8 +227,6 @@ func (f *BlobFetcher) loop() {
 	for {
 		select {
 		case ann := <-f.notify:
-			//TODO-BS DOS protection
-			//TODO-BS announced timeout
 			// Drop part of the announcements if too many have accumulated from that peer
 			// This prevents a peer from dominating the queue with txs without responding to the request
 			// This is why announces is designed to include the transactions that are currerntly being fetched
@@ -505,7 +500,7 @@ func (f *BlobFetcher) loop() {
 						delete(f.announces, peer)
 					}
 				}
-				// delete(f.announced, hash) // todo(healthykim) Is this possible?
+				// delete(f.announced, hash)
 				delete(f.alternates, hash)
 				delete(f.fetching, hash)
 			}
@@ -638,7 +633,6 @@ func (f *BlobFetcher) loop() {
 }
 
 // For peer waiting pull txs
-// todo(healthykim) integrate with reschduleWait?
 func (f *BlobFetcher) reschedulePeerWait(timer *mclock.Timer, trigger chan struct{}) {
 	if *timer != nil {
 		(*timer).Stop()

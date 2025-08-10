@@ -545,7 +545,7 @@ func handleGetTransactionPayload(backend Backend, msg Decoder, peer *Peer) error
 		return err
 	}
 	hashes, sidecars := answerGetTransactionPayload(backend, query.GetTransactionPayloadRequest)
-	return peer.ReplyTransactionPayloadRLP(query.RequestId, hashes, sidecars)
+	return peer.ReplyTransactionPayload(query.RequestId, hashes, sidecars)
 }
 
 func answerGetTransactionPayload(backend Backend, query GetTransactionPayloadRequest) ([]common.Hash, []*types.BlobTxSidecar) {
@@ -578,7 +578,6 @@ func handleTransactionPayload(backend Backend, msg Decoder, peer *Peer) error {
 		if sidecar == nil {
 			return fmt.Errorf("TransactionPayload: payload %d is nil", i)
 		}
-		//todo(healthykim) prevent getting the same response mulitple times (e.g. markTrasnaction)
 	}
 	requestTracker.Fulfil(peer.id, peer.version, TransactionPayloadMsg, sidecars.RequestId)
 

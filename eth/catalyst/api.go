@@ -410,7 +410,6 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 	return valid(nil), nil
 }
 
-// todo(healthykim) window / max value configuration
 // todo(healthykim) blob ID calculation logic
 func (api *ConsensusAPI) NotifyPrediction(headBlockRoot common.Hash, clMaxPredictionSize uint8) (engine.PredictionResponse, error) {
 	max := clMaxPredictionSize

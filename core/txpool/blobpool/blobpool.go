@@ -1152,7 +1152,6 @@ func (p *BlobPool) checkDelegationLimit(tx *types.Transaction) error {
 
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
-// TODO-BS No blob-specific validation? (e.g. proof verification)
 func (p *BlobPool) validateTx(tx *types.Transaction) error {
 	if err := p.ValidateTxBasics(tx); err != nil {
 		return err
@@ -1377,6 +1376,7 @@ func (p *BlobPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
 // GetBlobs returns a number of blobs and proofs for the given versioned hashes.
 // This is a utility method for the engine API, enabling consensus clients to
 // retrieve blobs from the pools directly instead of the network.
+// TODO Q. Duplication?
 func (p *BlobPool) GetBlobs(vhashes []common.Hash) []*types.BlobTxSidecar {
 	sidecars := make([]*types.BlobTxSidecar, len(vhashes))
 	for idx, vhash := range vhashes {
@@ -1446,7 +1446,6 @@ func (p *BlobPool) Add(txs []*types.Transaction, sync bool) []error {
 
 		p.buffer[tx.Hash()] = tx
 		// todo(healthykim) add errors
-		// todo(healthykim) basic validation logic before the buffer (blob fetcher should only proceed if it passes this validation)
 	}
 
 	if len(hashes) > 0 {

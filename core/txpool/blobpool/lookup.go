@@ -64,7 +64,7 @@ func (l *lookup) storeidOfBlob(vhash common.Hash) (uint64, bool) {
 	if !ok {
 		return 0, false
 	}
-	// If the blob is known and we have payload of that, return any tx for it
+	// If the blob is known and we have payload of it, return any tx for it
 	for tx := range txs {
 		if hasPayload, _ := l.hasPayloadOfTx(tx); !hasPayload {
 			continue
