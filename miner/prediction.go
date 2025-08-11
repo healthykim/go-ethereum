@@ -170,7 +170,7 @@ func (miner *Miner) predictBlobs(blobId engine.PredictionID, max uint8, W uint8,
 					log.Error("Error while generating prediction", "id", prediction.id, "err", err)
 				}
 				timer.Reset(miner.config.Recommit)
-			case <-prediction.stop: //todo(healthykim) where
+			case <-prediction.stop:
 				log.Info("Stopping work on prediction", "id", prediction.id, "reason", "delivery")
 				return
 			case <-endTimer.C:

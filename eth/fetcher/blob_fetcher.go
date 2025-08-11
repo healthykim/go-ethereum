@@ -23,8 +23,7 @@ const (
 	// TODO(healthykim): should we limit the maximum payload size to fetch
 	maxPayloadRetrievalSize = 128 * 1024
 	maxPayloadRetrievals    = 1
-	// todo(heatlhykim)
-	maxPayloadAnnounces = 4096
+	maxPayloadAnnounces     = 4096
 )
 
 type blobTxAnnounce struct {
@@ -185,7 +184,6 @@ func (f *BlobFetcher) Enqueue(peer string, hashes []common.Hash, payloads []*typ
 		}
 		hashBatch := hashes[i:end]
 		payloadBatch := payloads[i:end]
-		// TODO(healthykim): track validation errors if needed
 		for j, _ := range f.reportAvailability(hashBatch, true, payloadBatch) {
 			added = append(added, hashBatch[j])
 		}
