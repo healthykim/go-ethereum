@@ -41,6 +41,11 @@ func (prediction *BlobPrediction) Convert() []*engine.BlobPredictionToStage {
 	prediction.lock.Lock()
 	defer prediction.lock.Unlock()
 
+	select {
+	case <-prediction.stop:
+	default:
+		close(prediction.stop)
+	}
 	var res []*engine.BlobPredictionToStage
 	for _, tx := range prediction.transaction {
 		for blobIdx, blob := range tx.BlobTxSidecar().Blobs {
