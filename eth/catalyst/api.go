@@ -411,15 +411,7 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 }
 
 // todo(healthykim) blob ID calculation logic
-func (api *ConsensusAPI) NotifyPrediction(headBlockRoot common.Hash, clMaxPredictionSize uint8) (engine.PredictionResponse, error) {
-	max := clMaxPredictionSize
-	if api.config().MaxPredictionSize != nil && max > *api.config().MaxPredictionSize {
-		max = *api.config().MaxPredictionSize
-	}
-	window := uint8(2)
-	if api.config().PredictionWindow != nil {
-		window = *api.config().PredictionWindow
-	}
+func (api *ConsensusAPI) NotifyPrediction(headBlockRoot common.Hash, clMaxPredictionSize uint8, windowSize uint8) (engine.PredictionResponse, error) {
 	timestamp := uint64(time.Now().Unix())
 	random := rand.Int()
 	buf := make([]byte, 8)
@@ -433,7 +425,7 @@ func (api *ConsensusAPI) NotifyPrediction(headBlockRoot common.Hash, clMaxPredic
 	copy(predictionID[:], hasher.Sum(nil)[:8])
 
 	// Timestamp setting logic - refer to prepareWork
-	prediction, _ := api.eth.Miner().PredictBlobTxs(predictionID, max, window, timestamp)
+	prediction, _ := api.eth.Miner().PredictBlobTxs(predictionID, clMaxPredictionSize, windowSize, timestamp)
 	api.predictions.put(predictionID, prediction)
 
 	log.Debug("Prediction started for ", "predictionId", predictionID, "slot", headBlockRoot.String())

@@ -1202,6 +1202,7 @@ func (p *BlobPool) validateTx(tx *types.Transaction) error {
 	if uint64(len(p.index[from])) > tx.Nonce()-next {
 		prev := p.index[from][int(tx.Nonce()-next)]
 		// Ensure the transaction is different than the one tracked locally
+		// todo: does this has impact?
 		if prev.hash == tx.Hash() {
 			return txpool.ErrAlreadyKnown
 		}
