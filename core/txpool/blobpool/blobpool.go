@@ -1767,7 +1767,7 @@ func (p *BlobPool) Pending(filter txpool.PendingFilter) map[common.Address][]*tx
 			if !tx.hasPayload {
 				break
 			}
-			if _, requested := p.verifyRequested[tx.hash]; requested && filter.Prediction {
+			if _, requested := p.verifyRequested[tx.hash]; requested && filter.Staging {
 				// Might be already staged
 				break
 			}

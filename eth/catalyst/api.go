@@ -19,10 +19,8 @@ package catalyst
 
 import (
 	"crypto/sha256"
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"math/rand"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -100,8 +98,7 @@ var caps = []string{
 	"engine_getPayloadV5",
 	"engine_getBlobsV1",
 	"engine_getBlobsV2",
-	"engine_getBlobsToStage",
-	"engine_notifyPrediction",
+	"engine_getIncludableBlobs",
 	"engine_changeBlobpoolMode",
 	"engine_cellVerification",
 	"engine_newPayloadV1",
@@ -139,8 +136,6 @@ type ConsensusAPI struct {
 
 	remoteBlocks *headerQueue  // Cache of remote payloads received
 	localBlocks  *payloadQueue // Cache of local payloads generated
-	predictions  *predictionQueue
-
 	// The forkchoice update and new payload method require us to return the
 	// latest valid hash in an invalid chain. To support that return, we need
 	// to track historical bad blocks as well as bad tipsets in case a chain
@@ -192,7 +187,6 @@ func newConsensusAPIWithoutHeartbeat(eth *eth.Ethereum) *ConsensusAPI {
 		eth:               eth,
 		remoteBlocks:      newHeaderQueue(),
 		localBlocks:       newPayloadQueue(),
-		predictions:       newPredictionQueue(),
 		invalidBlocksHits: make(map[common.Hash]int),
 		invalidTipsets:    make(map[common.Hash]*types.Header),
 	}
@@ -411,28 +405,8 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 }
 
 // todo(healthykim) blob ID calculation logic
-func (api *ConsensusAPI) NotifyPrediction(headBlockRoot common.Hash, clMaxPredictionSize uint8, windowSize uint8) (engine.PredictionResponse, error) {
-	timestamp := uint64(time.Now().Unix())
-	random := rand.Int()
-	buf := make([]byte, 8)
-	binary.LittleEndian.PutUint64(buf, uint64(random))
-
-	var predictionID engine.PredictionID
-	hasher := sha256.New()
-	hasher.Write(buf)
-	hasher.Write(headBlockRoot[:])
-	binary.Write(hasher, binary.BigEndian, timestamp)
-	copy(predictionID[:], hasher.Sum(nil)[:8])
-
-	// Timestamp setting logic - refer to prepareWork
-	prediction, _ := api.eth.Miner().PredictBlobTxs(predictionID, clMaxPredictionSize, windowSize, timestamp)
-	api.predictions.put(predictionID, prediction)
-
-	log.Debug("Prediction started for ", "predictionId", predictionID, "slot", headBlockRoot.String())
-
-	return engine.PredictionResponse{
-		PredictionID: &predictionID,
-	}, nil
+func (api *ConsensusAPI) getIncludableBlobs(returnSize uint8, windowSize uint8) ([]*engine.IncludableBlob, error) {
+	return api.eth.Miner().GetIncludableBlobs(returnSize, windowSize)
 }
 
 // Eager mode - Fetch every blob tx arriving from the time this method is called
@@ -623,18 +597,6 @@ func (api *ConsensusAPI) GetBlobsV2(hashes []common.Hash) ([]*engine.BlobAndProo
 		}
 	}
 	return res, nil
-}
-
-func (api *ConsensusAPI) GetBlobsToStage(id engine.PredictionID) ([]*engine.BlobPredictionToStage, error) {
-
-	prediction := api.predictions.get(id)
-
-	if prediction == nil {
-		log.Error("There is no prediction with given id", "prediction id", id)
-		return nil, engine.UnknownPrediction
-	}
-
-	return prediction.Convert(), nil
 }
 
 // Helper for NewPayload* methods.

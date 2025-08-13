@@ -140,8 +140,8 @@ func (miner *Miner) BuildPayload(args *BuildPayloadArgs, witness bool) (*Payload
 }
 
 // BuildPayload builds the payload according to the provided parameters.
-func (miner *Miner) PredictBlobTxs(blobId engine.PredictionID, max uint8, window uint8, timestamp uint64) (*BlobPrediction, error) {
-	return miner.predictBlobs(blobId, max, window, timestamp)
+func (miner *Miner) GetIncludableBlobs(returnSize uint8, window uint8) ([]*engine.IncludableBlob, error) {
+	return miner.getIncludableBlobs(returnSize, window)
 }
 
 // getPending retrieves the pending block based on the current head block.

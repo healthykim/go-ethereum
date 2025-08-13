@@ -1,0 +1,124 @@
+// Copyright 2025 The go-ethereum Authors
+// This file is part of the go-ethereum library.
+//
+// The go-ethereum library is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// The go-ethereum library is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+
+package miner
+
+import (
+	"math/big"
+
+	"github.com/ethereum/go-ethereum/beacon/engine"
+	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
+	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
+	"github.com/ethereum/go-ethereum/core/txpool"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/holiman/uint256"
+)
+
+func (miner *Miner) getIncludableBlobs(returnSize uint8, windowSize uint8) ([]*engine.IncludableBlob, error) {
+	miner.confMu.RLock()
+	tip := miner.config.GasPrice
+	miner.confMu.RUnlock()
+
+	parent := miner.chain.CurrentBlock()
+
+	// Assume that other miners also have similar tip(minimum gas price) value
+	filter := txpool.PendingFilter{
+		MinTip:  uint256.MustFromBig(tip),
+		Staging: true,
+	}
+
+	baseFee, blobFee := miner.predictBlobFee(parent, windowSize)
+
+	// Refer to fillTransaction
+	filter.BaseFee = uint256.MustFromBig(baseFee)
+	filter.BlobFee = uint256.MustFromBig(blobFee)
+	filter.OnlyPlainTxs, filter.OnlyBlobTxs = false, true
+	pendingBlobTxs := miner.txpool.Pending(filter)
+
+	// Fill the block with all available pending transactions.
+	txs := make([]*types.Transaction, 0, returnSize)
+
+	if len(pendingBlobTxs) > 0 {
+		// Refer to newTransactionsByPriceAndNonce
+		signer := types.MakeSigner(miner.chainConfig, parent.Number, parent.Time)
+		blobTxs := newTransactionsByPriceAndNonce(signer, pendingBlobTxs, baseFee)
+		for {
+			bltx, _ := blobTxs.Peek()
+			// Resolve to check if we have full blob data
+			// Can be changed
+			btx := bltx.Resolve()
+
+			if btx != nil {
+				txs = append(txs, btx)
+			}
+
+			blobTxs.Pop()
+
+			if len(txs) >= int(returnSize) || len(blobTxs.heads) == 0 {
+				break
+			}
+		}
+	}
+
+	var res []*engine.IncludableBlob
+	for _, tx := range txs {
+		for blobIdx, blob := range tx.BlobTxSidecar().Blobs {
+			r := engine.IncludableBlob{
+				TxHash: tx.Hash(),
+			}
+			r.Blob = blob[:]
+			r.BlobIndex = uint(blobIdx)
+			r.KzgCommitment = tx.BlobTxSidecar().Commitments[blobIdx][:]
+			proofs := tx.BlobTxSidecar().CellProofsAt(blobIdx)
+			for _, proof := range proofs {
+				r.CellProofs = append(r.CellProofs, proof[:])
+			}
+			res = append(res, &r)
+		}
+	}
+
+	return res, nil
+}
+
+func (miner *Miner) predictBlobFee(parent *types.Header, windowSize uint8) (blobBaseFee *big.Int, blobFee *big.Int) {
+	// Predict base fee under the assumption that market will go down as much as possible
+	predictedBaseFee := eip1559.CalcBaseFee(miner.chainConfig, parent)
+	multiplier := new(big.Int).Exp(big.NewInt(875), new(big.Int).SetUint64(uint64(windowSize)), nil)
+	divisor := new(big.Int).Exp(big.NewInt(1000), new(big.Int).SetUint64(uint64(windowSize)), nil)
+
+	predictedBaseFee.Mul(predictedBaseFee, multiplier)
+	predictedBaseFee.Div(predictedBaseFee, divisor)
+	if predictedBaseFee.Cmp(new(big.Int).SetUint64(1)) <= 0 {
+		predictedBaseFee = new(big.Int).SetUint64(1)
+	}
+	// Predict blob fee under the assumption that market will go down as much as possible
+	// todo(healthykim): EIP-7918
+	excessBlobGas := eip4844.CalcExcessBlobGas(miner.chainConfig, parent, miner.chain.HeaderChain().CurrentHeader().Time)
+	// CalcBlobFeeWithoutHeader is new function to calculate blob fee without loading all header info
+	predictedBlobFee := eip4844.CalcBlobFeeWithoutHeader(miner.chainConfig, excessBlobGas, miner.chain.HeaderChain().CurrentHeader().Time)
+
+	exp := new(big.Int).SetUint64(uint64(windowSize))
+	multiplier = new(big.Int).Exp(big.NewInt(1000), exp, nil)
+	divisor = new(big.Int).Exp(big.NewInt(1125), exp, nil)
+
+	predictedBlobFee = new(big.Int).Mul(predictedBlobFee, multiplier)
+	predictedBlobFee.Div(predictedBlobFee, divisor)
+	if predictedBlobFee.Cmp(new(big.Int).SetUint64(1)) <= 0 {
+		predictedBlobFee = new(big.Int).SetUint64(1)
+	}
+
+	return predictedBaseFee, predictedBlobFee
+}
