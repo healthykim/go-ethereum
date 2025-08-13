@@ -405,7 +405,7 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 }
 
 // todo(healthykim) blob ID calculation logic
-func (api *ConsensusAPI) getIncludableBlobs(returnSize uint8, windowSize uint8) ([]*engine.IncludableBlob, error) {
+func (api *ConsensusAPI) GetIncludableBlobs(returnSize uint8, windowSize uint8) ([]*engine.IncludableBlob, error) {
 	return api.eth.Miner().GetIncludableBlobs(returnSize, windowSize)
 }
 
