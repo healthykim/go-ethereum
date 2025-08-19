@@ -1953,18 +1953,3 @@ func (pool *LegacyPool) Clear() {
 func (pool *LegacyPool) HasPendingAuth(addr common.Address) bool {
 	return pool.all.hasAuth(addr)
 }
-
-func (p *LegacyPool) ReportAvailability(txHashes []common.Hash, available bool, blobSidecars []*types.BlobTxSidecar) []error {
-	// Not supported
-	return nil
-}
-
-func (p *LegacyPool) GetSidecar(hash common.Hash) *types.BlobTxSidecar {
-	// Not supported
-	return nil
-}
-
-func (p *LegacyPool) ShouldPull(hash common.Hash) bool {
-	// Not supported
-	return false
-}

@@ -65,6 +65,7 @@ type Backend interface {
 
 	// TxPool retrieves the transaction pool object to serve data.
 	TxPool() TxPool
+	BlobPool() BlobPool
 
 	// AcceptTxs retrieves whether transaction processing is enabled on the node
 	// or if inbound transactions should simply be dropped.
@@ -94,14 +95,13 @@ type TxPool interface {
 	// the given hash.
 	GetRLP(hash common.Hash) []byte
 
-	//todo(healthykim) refactor
-	GetSidecar(hash common.Hash) *types.BlobTxSidecar
-
 	// GetMetadata returns the transaction type and transaction size with the
 	// given transaction hash.
 	GetMetadata(hash common.Hash) *txpool.TxMetadata
+}
 
-	ShouldPull(hash common.Hash) bool
+type BlobPool interface {
+	GetSidecar(hash common.Hash) *types.BlobTxSidecar
 }
 
 // MakeProtocols constructs the P2P protocol definitions for `eth`.

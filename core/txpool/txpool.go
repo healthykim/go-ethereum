@@ -290,40 +290,6 @@ func (p *TxPool) Has(hash common.Hash) bool {
 	return false
 }
 
-func (p *TxPool) ReportAvailability(txHashes []common.Hash, available bool, blobSidecars []*types.BlobTxSidecar) []error {
-	// todo(healthykim) refactor
-	errs := make([]error, len(txHashes))
-	for i := 0; i < len(p.subpools); i++ {
-		// Txpool does nothing inside of reportAvailability and just return nil, which is kinda annoying
-		if err := p.subpools[i].ReportAvailability(txHashes, available, blobSidecars); err != nil {
-			errs = err
-		}
-	}
-	return errs
-}
-
-func (p *TxPool) GetSidecar(hash common.Hash) *types.BlobTxSidecar {
-	// todo(healthykim) refactor
-	for _, subpool := range p.subpools {
-		sidecar := subpool.GetSidecar(hash)
-		if sidecar != nil {
-			return sidecar
-		}
-	}
-	return nil
-}
-
-func (p *TxPool) ShouldPull(hash common.Hash) bool {
-	// todo(healthykim) refactor
-	for _, subpool := range p.subpools {
-		if subpool.ShouldPull(hash) {
-			// legacypool always returns false
-			return true
-		}
-	}
-	return false
-}
-
 // Get returns a transaction if it is contained in the pool, or nil otherwise.
 func (p *TxPool) Get(hash common.Hash) *types.Transaction {
 	for _, subpool := range p.subpools {

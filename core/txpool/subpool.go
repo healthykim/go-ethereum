@@ -180,10 +180,4 @@ type SubPool interface {
 
 	// Clear removes all tracked transactions from the pool
 	Clear()
-
-	ReportAvailability(txHashes []common.Hash, available bool, blobSidecars []*types.BlobTxSidecar) []error
-
-	GetSidecar(hash common.Hash) *types.BlobTxSidecar
-
-	ShouldPull(hash common.Hash) bool
 }

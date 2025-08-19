@@ -559,7 +559,7 @@ func answerGetTransactionPayload(backend Backend, query GetTransactionPayloadReq
 			break
 		}
 		// Retrieve the requested transaction, skipping if unknown to us
-		sidecar := backend.TxPool().GetSidecar(hash)
+		sidecar := backend.BlobPool().GetSidecar(hash)
 		if sidecar == nil {
 			continue
 		}

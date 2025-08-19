@@ -91,10 +91,12 @@ type txPool interface {
 	// can decide whether to receive notifications only for newly seen transactions
 	// or also for reorged out ones.
 	SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) event.Subscription
+}
+
+type blobPool interface {
+	GetSidecar(hash common.Hash) *types.BlobTxSidecar
 
 	ReportAvailability(txHashes []common.Hash, available bool, blobSidecars []*types.BlobTxSidecar) []error
-
-	GetSidecar(hash common.Hash) *types.BlobTxSidecar
 
 	ShouldPull(hash common.Hash) bool
 }
@@ -102,10 +104,11 @@ type txPool interface {
 // handlerConfig is the collection of initialization parameters to create a full
 // node network handler.
 type handlerConfig struct {
-	NodeID         enode.ID               // P2P node ID used for tx propagation topology
-	Database       ethdb.Database         // Database for direct sync insertions
-	Chain          *core.BlockChain       // Blockchain to serve data from
-	TxPool         txPool                 // Transaction pool to propagate from
+	NodeID         enode.ID         // P2P node ID used for tx propagation topology
+	Database       ethdb.Database   // Database for direct sync insertions
+	Chain          *core.BlockChain // Blockchain to serve data from
+	TxPool         txPool           // Transaction pool to propagate from
+	BlobPool       blobPool
 	Network        uint64                 // Network identifier to advertise
 	Sync           ethconfig.SyncMode     // Whether to snap or full sync
 	BloomCache     uint64                 // Megabytes to alloc for snap sync bloom
@@ -122,6 +125,7 @@ type handler struct {
 
 	database ethdb.Database
 	txpool   txPool
+	blobpool blobPool
 	chain    *core.BlockChain
 	maxPeers int
 
@@ -158,6 +162,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		eventMux:       config.EventMux,
 		database:       config.Database,
 		txpool:         config.TxPool,
+		blobpool:       config.BlobPool,
 		chain:          config.Chain,
 		peers:          newPeerSet(),
 		requiredBlocks: config.RequiredBlocks,
@@ -227,7 +232,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		return p.RequestPayloads(hashes)
 	}
 	h.txFetcher = fetcher.NewTxFetcher(h.txpool.Has, addTxs, fetchTx, h.removePeer)
-	h.blobFetcher = fetcher.NewBlobFetcher(h.txpool.Has, hasPayload, h.txpool.ReportAvailability, fetchPayload, h.removePeer, h.txpool.ShouldPull)
+	h.blobFetcher = fetcher.NewBlobFetcher(h.txpool.Has, hasPayload, h.blobpool.ReportAvailability, fetchPayload, h.removePeer, h.blobpool.ShouldPull)
 	return h, nil
 }
 
