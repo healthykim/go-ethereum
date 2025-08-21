@@ -74,10 +74,10 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 				hasPayload = append(hasPayload, packet.HasPayloads[i])
 			}
 		}
-		if len(packet.Hashes) == 0 {
+		if len(hashes) == 0 {
 			return nil
 		}
-		return h.blobFetcher.Notify(peer.ID(), packet.Hashes, packet.HasPayloads)
+		return h.blobFetcher.Notify(peer.ID(), hashes, hasPayload)
 
 	case *eth.TransactionsPacket:
 		var hashes []common.Hash

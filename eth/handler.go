@@ -478,6 +478,7 @@ func (h *handler) Stop() {
 	h.txsSub.Unsubscribe() // quits txBroadcastLoop
 	h.blockRange.stop()
 	h.txFetcher.Stop()
+	h.blobFetcher.Stop()
 	h.downloader.Terminate()
 
 	// Quit chainSync and txsync64.

@@ -46,6 +46,7 @@ type testEthHandler struct {
 
 func (h *testEthHandler) Chain() *core.BlockChain              { panic("no backing chain") }
 func (h *testEthHandler) TxPool() eth.TxPool                   { panic("no backing tx pool") }
+func (h *testEthHandler) BlobPool() eth.BlobPool               { panic("no backing blob pool") }
 func (h *testEthHandler) AcceptTxs() bool                      { return true }
 func (h *testEthHandler) RunPeer(*eth.Peer, eth.Handler) error { panic("not used in tests") }
 func (h *testEthHandler) PeerInfo(enode.ID) interface{}        { panic("not used in tests") }
@@ -61,7 +62,7 @@ func (h *testEthHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		return nil
 
 	case *eth.TransactionsPacket:
-		h.txBroadcasts.Send(([]*types.Transaction)(*packet))
+		h.txBroadcasts.Send(packet.Txs)
 		return nil
 
 	case *eth.PooledTransactionsResponse:
@@ -103,18 +104,24 @@ func testForkIDSplit(t *testing.T, protocol uint) {
 		_, blocksNoFork, _  = core.GenerateChainWithGenesis(gspecNoFork, engine, 2, nil)
 		_, blocksProFork, _ = core.GenerateChainWithGenesis(gspecProFork, engine, 2, nil)
 
+		txPoolNoFork = newTestTxPool()
+
 		ethNoFork, _ = newHandler(&handlerConfig{
 			Database:   dbNoFork,
 			Chain:      chainNoFork,
-			TxPool:     newTestTxPool(),
+			TxPool:     txPoolNoFork,
+			BlobPool:   txPoolNoFork,
 			Network:    1,
 			Sync:       ethconfig.FullSync,
 			BloomCache: 1,
 		})
+
+		txPoolProFork = newTestTxPool()
 		ethProFork, _ = newHandler(&handlerConfig{
 			Database:   dbProFork,
 			Chain:      chainProFork,
-			TxPool:     newTestTxPool(),
+			TxPool:     txPoolProFork,
+			BlobPool:   txPoolProFork,
 			Network:    1,
 			Sync:       ethconfig.FullSync,
 			BloomCache: 1,
@@ -263,7 +270,7 @@ func testRecvTransactions(t *testing.T, protocol uint) {
 	tx := types.NewTransaction(0, common.Address{}, big.NewInt(0), 100000, big.NewInt(0), nil)
 	tx, _ = types.SignTx(tx, types.HomesteadSigner{}, testKey)
 
-	if err := src.SendTransactions([]*types.Transaction{tx}); err != nil {
+	if err := src.SendTransactions([]*types.Transaction{tx}, []bool{false}); err != nil {
 		t.Fatalf("failed to send transaction: %v", err)
 	}
 	select {

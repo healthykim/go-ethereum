@@ -86,6 +86,7 @@ func (s *Suite) EthTests() []utesting.Test {
 		{Name: "Transaction", Fn: s.TestTransaction},
 		{Name: "InvalidTxs", Fn: s.TestInvalidTxs},
 		{Name: "NewPooledTxs", Fn: s.TestNewPooledTxs},
+		// todo(healtykim) add more test cases
 		{Name: "BlobViolations", Fn: s.TestBlobViolations},
 		{Name: "TestBlobTxWithoutSidecar", Fn: s.TestBlobTxWithoutSidecar},
 		{Name: "TestBlobTxWithMismatchedSidecar", Fn: s.TestBlobTxWithMismatchedSidecar},
@@ -933,18 +934,20 @@ func (s *Suite) TestBlobViolations(t *utesting.T) {
 		// Invalid tx size.
 		{
 			ann: eth.NewPooledTransactionHashesPacket{
-				Types:  []byte{types.BlobTxType, types.BlobTxType},
-				Sizes:  []uint32{uint32(t1[0].Size()), uint32(t1[1].Size() + 10)},
-				Hashes: []common.Hash{t1[0].Hash(), t1[1].Hash()},
+				Types:       []byte{types.BlobTxType, types.BlobTxType},
+				Sizes:       []uint32{uint32(t1[0].Size()), uint32(t1[1].Size() + 10)},
+				Hashes:      []common.Hash{t1[0].Hash(), t1[1].Hash()},
+				HasPayloads: []bool{true, true},
 			},
 			resp: eth.PooledTransactionsResponse(t1),
 		},
 		// Wrong tx type.
 		{
 			ann: eth.NewPooledTransactionHashesPacket{
-				Types:  []byte{types.DynamicFeeTxType, types.BlobTxType},
-				Sizes:  []uint32{uint32(t2[0].Size()), uint32(t2[1].Size())},
-				Hashes: []common.Hash{t2[0].Hash(), t2[1].Hash()},
+				Types:       []byte{types.DynamicFeeTxType, types.BlobTxType},
+				Sizes:       []uint32{uint32(t2[0].Size()), uint32(t2[1].Size())},
+				Hashes:      []common.Hash{t2[0].Hash(), t2[1].Hash()},
+				HasPayloads: []bool{true, true},
 			},
 			resp: eth.PooledTransactionsResponse(t2),
 		},

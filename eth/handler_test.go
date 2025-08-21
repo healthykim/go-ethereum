@@ -18,6 +18,7 @@ package eth
 
 import (
 	"math/big"
+	"math/rand"
 	"sort"
 	"sync"
 
@@ -109,17 +110,6 @@ func (p *testTxPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
 	return nil
 }
 
-func (p *testTxPool) GetSidecar(hash common.Hash) *types.BlobTxSidecar {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	tx := p.pool[hash]
-	if tx.Type() == types.BlobTxType {
-		return tx.BlobTxSidecar()
-	}
-	return nil
-}
-
 // Add appends a batch of transactions to the pool, and notifies any
 // listeners if the addition channel is non nil
 func (p *testTxPool) Add(txs []*types.Transaction, sync bool) []error {
@@ -169,6 +159,47 @@ func (p *testTxPool) SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bo
 	return p.txFeed.Subscribe(ch)
 }
 
+func (p *testTxPool) GetSidecar(hash common.Hash) *types.BlobTxSidecar {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	tx := p.pool[hash]
+	if tx.Type() == types.BlobTxType {
+		return tx.BlobTxSidecar()
+	}
+	return nil
+}
+func (p *testTxPool) ShouldPull(hash common.Hash) bool {
+	if rand.Intn(100) < 15 {
+		return true
+	} else {
+		return false
+	}
+}
+
+func (p *testTxPool) ReportAvailability(txHashes []common.Hash, available bool, blobSidecars []*types.BlobTxSidecar) []error {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	if !available {
+		// drop
+		for _, hash := range txHashes {
+			delete(p.pool, hash)
+		}
+		return nil
+	}
+
+	// add blobsidecars to the storage
+	for i, hash := range txHashes {
+		tx, _ := p.pool[hash]
+
+		if i < len(blobSidecars) && blobSidecars[i] != nil {
+			tx = tx.WithBlobTxSidecar(blobSidecars[i])
+		}
+	}
+	return nil
+}
+
 // testHandler is a live implementation of the Ethereum protocol handler, just
 // preinitialized with some sane testing defaults and the transaction pool mocked
 // out.
@@ -205,6 +236,7 @@ func newTestHandlerWithBlocks(blocks int) *testHandler {
 		Database:   db,
 		Chain:      chain,
 		TxPool:     txpool,
+		BlobPool:   txpool,
 		Network:    1,
 		Sync:       ethconfig.SnapSync,
 		BloomCache: 1,
