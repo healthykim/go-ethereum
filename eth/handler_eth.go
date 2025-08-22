@@ -24,6 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 )
 
@@ -110,17 +111,17 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		// in the header, disconnect from the sending peer.
 		for _, tx := range *packet {
 			if tx.Type() == types.BlobTxType {
-				if tx.BlobTxSidecar() == nil {
-					return errors.New("received sidecar-less blob transaction")
+				if tx.BlobTxSidecar() != nil {
+					log.Info("received full blob tx from %v", peer.ID())
+					return errors.New("disallowed broadcast full-blob transaction")
 				}
-				if err := tx.BlobTxSidecar().ValidateBlobCommitmentHashes(tx.BlobHashes()); err != nil {
-					return err
-				}
+				log.Info("received detached type 3 tx from %v", peer.ID())
 			}
 		}
 		return h.txFetcher.Enqueue(peer.ID(), *packet, true)
 
 	case *eth.TransactionPayloadResponse:
+		// todo(healthykim) change the validation error logic
 		return h.blobFetcher.Enqueue(peer.ID(), packet.Hashes, packet.Sidecars)
 
 	default:

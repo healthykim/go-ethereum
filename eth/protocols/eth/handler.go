@@ -200,6 +200,20 @@ var eth69 = map[uint64]msgHandler{
 	GetPooledTransactionsMsg:      handleGetPooledTransactions,
 	PooledTransactionsMsg:         handlePooledTransactions,
 	BlockRangeUpdateMsg:           handleBlockRangeUpdate,
+}
+
+var eth70 = map[uint64]msgHandler{
+	TransactionsMsg:               handleTransactions,
+	NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes,
+	GetBlockHeadersMsg:            handleGetBlockHeaders,
+	BlockHeadersMsg:               handleBlockHeaders,
+	GetBlockBodiesMsg:             handleGetBlockBodies,
+	BlockBodiesMsg:                handleBlockBodies,
+	GetReceiptsMsg:                handleGetReceipts69,
+	ReceiptsMsg:                   handleReceipts[*ReceiptList69],
+	GetPooledTransactionsMsg:      handleGetPooledTransactions,
+	PooledTransactionsMsg:         handlePooledTransactions,
+	BlockRangeUpdateMsg:           handleBlockRangeUpdate,
 	GetTransactionPayloadMsg:      handleGetTransactionPayload,
 	TransactionPayloadMsg:         handleTransactionPayload,
 }
@@ -222,6 +236,8 @@ func handleMessage(backend Backend, peer *Peer) error {
 		handlers = eth68
 	} else if peer.version == ETH69 {
 		handlers = eth69
+	} else if peer.version == ETH70 {
+		handlers = eth70
 	} else {
 		return fmt.Errorf("unknown eth protocol version: %v", peer.version)
 	}

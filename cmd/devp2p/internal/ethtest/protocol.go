@@ -30,6 +30,7 @@ const (
 )
 
 // Unexported devp2p protocol lengths from p2p package.
+// TODO-BS
 const (
 	baseProtoLen = 16
 	ethProtoLen  = 18

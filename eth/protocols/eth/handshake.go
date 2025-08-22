@@ -38,6 +38,8 @@ const (
 // network IDs, difficulties, head and genesis blocks.
 func (p *Peer) Handshake(networkID uint64, chain *core.BlockChain, rangeMsg BlockRangeUpdatePacket) error {
 	switch p.version {
+	case ETH70:
+		return errors.New("Unimplemented")
 	case ETH69:
 		return p.handshake69(networkID, chain, rangeMsg)
 	case ETH68:

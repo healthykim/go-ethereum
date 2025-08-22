@@ -1480,6 +1480,10 @@ func (p *BlobPool) ReportAvailability(txHashes []common.Hash, available bool, bl
 		}
 
 		if i < len(blobSidecars) && blobSidecars[i] != nil {
+			if err := blobSidecars[i].ValidateBlobCommitmentHashes(tx.BlobHashes()); err != nil {
+				errs[i] = err
+				continue
+			}
 			tx = tx.WithBlobTxSidecar(blobSidecars[i])
 		}
 		errs[i] = p.add(tx)

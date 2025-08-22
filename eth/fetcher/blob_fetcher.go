@@ -184,7 +184,10 @@ func (f *BlobFetcher) Enqueue(peer string, hashes []common.Hash, payloads []*typ
 		}
 		hashBatch := hashes[i:end]
 		payloadBatch := payloads[i:end]
-		for j, _ := range f.reportAvailability(hashBatch, true, payloadBatch) {
+		for j, err := range f.reportAvailability(hashBatch, true, payloadBatch) {
+			if err != nil {
+				return err
+			}
 			added = append(added, hashBatch[j])
 		}
 	}
