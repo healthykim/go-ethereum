@@ -24,7 +24,6 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 )
 
@@ -112,10 +111,8 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		for _, tx := range *packet {
 			if tx.Type() == types.BlobTxType {
 				if tx.BlobTxSidecar() != nil {
-					log.Info("received full blob tx from %v", peer.ID())
 					return errors.New("disallowed broadcast full-blob transaction")
 				}
-				log.Info("received detached type 3 tx from %v", peer.ID())
 			}
 		}
 		return h.txFetcher.Enqueue(peer.ID(), *packet, true)
