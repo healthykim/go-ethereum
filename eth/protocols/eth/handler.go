@@ -176,8 +176,8 @@ type Decoder interface {
 var eth68 = map[uint64]msgHandler{
 	NewBlockHashesMsg:             handleNewBlockhashes,
 	NewBlockMsg:                   handleNewBlock,
-	TransactionsMsg:               handleTransactions,
-	NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes,
+	TransactionsMsg:               handleTransactions69,
+	NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes69,
 	GetBlockHeadersMsg:            handleGetBlockHeaders,
 	BlockHeadersMsg:               handleBlockHeaders,
 	GetBlockBodiesMsg:             handleGetBlockBodies,
@@ -189,8 +189,8 @@ var eth68 = map[uint64]msgHandler{
 }
 
 var eth69 = map[uint64]msgHandler{
-	TransactionsMsg:               handleTransactions,
-	NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes,
+	TransactionsMsg:               handleTransactions69,
+	NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes69,
 	GetBlockHeadersMsg:            handleGetBlockHeaders,
 	BlockHeadersMsg:               handleBlockHeaders,
 	GetBlockBodiesMsg:             handleGetBlockBodies,
@@ -203,8 +203,8 @@ var eth69 = map[uint64]msgHandler{
 }
 
 var eth70 = map[uint64]msgHandler{
-	TransactionsMsg:               handleTransactions,
-	NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes,
+	TransactionsMsg:               handleTransactions70,
+	NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes70,
 	GetBlockHeadersMsg:            handleGetBlockHeaders,
 	BlockHeadersMsg:               handleBlockHeaders,
 	GetBlockBodiesMsg:             handleGetBlockBodies,

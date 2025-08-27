@@ -431,13 +431,13 @@ func handleReceipts[L ReceiptsList](backend Backend, msg Decoder, peer *Peer) er
 	}, metadata)
 }
 
-func handleNewPooledTransactionHashes(backend Backend, msg Decoder, peer *Peer) error {
+func handleNewPooledTransactionHashes69(backend Backend, msg Decoder, peer *Peer) error {
 	// New transaction announcement arrived, make sure we have
 	// a valid and fresh chain to handle them
 	if !backend.AcceptTxs() {
 		return nil
 	}
-	ann := new(NewPooledTransactionHashesPacket)
+	ann := new(NewPooledTransactionHashesPacket69)
 	if err := msg.Decode(ann); err != nil {
 		return err
 	}
@@ -451,6 +451,25 @@ func handleNewPooledTransactionHashes(backend Backend, msg Decoder, peer *Peer) 
 	return backend.Handle(peer, ann)
 }
 
+func handleNewPooledTransactionHashes70(backend Backend, msg Decoder, peer *Peer) error {
+	// New transaction announcement arrived, make sure we have
+	// a valid and fresh chain to handle them
+	if !backend.AcceptTxs() {
+		return nil
+	}
+	ann := new(NewPooledTransactionHashesPacket70)
+	if err := msg.Decode(ann); err != nil {
+		return err
+	}
+	if len(ann.Hashes) != len(ann.Types) || len(ann.Hashes) != len(ann.Sizes) || len(ann.Hashes) != len(ann.HasPayloads) {
+		return fmt.Errorf("NewPooledTransactionHashes: invalid len of fields in %v %v %v %v", len(ann.Hashes), len(ann.Types), len(ann.Sizes), len(ann.HasPayloads))
+	}
+	// Schedule all the unknown hashes for retrieval
+	for _, hash := range ann.Hashes {
+		peer.markTransaction(hash)
+	}
+	return backend.Handle(peer, ann)
+}
 func handleGetPooledTransactions(backend Backend, msg Decoder, peer *Peer) error {
 	// Decode the pooled transactions retrieval message
 	var query GetPooledTransactionsPacket
@@ -484,13 +503,33 @@ func answerGetPooledTransactions(backend Backend, query GetPooledTransactionsReq
 	return hashes, txs
 }
 
-func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
+func handleTransactions69(backend Backend, msg Decoder, peer *Peer) error {
 	// Transactions arrived, make sure we have a valid and fresh chain to handle them
 	if !backend.AcceptTxs() {
 		return nil
 	}
 	// Transactions can be processed, parse all of them and deliver to the pool
-	var txs TransactionsPacket
+	var txs TransactionsPacket69
+	if err := msg.Decode(&txs); err != nil {
+		return err
+	}
+	for i, tx := range txs {
+		// Validate and mark the remote transaction
+		if tx == nil {
+			return fmt.Errorf("Transactions: transaction %d is nil", i)
+		}
+		peer.markTransaction(tx.Hash())
+	}
+	return backend.Handle(peer, &txs)
+}
+
+func handleTransactions70(backend Backend, msg Decoder, peer *Peer) error {
+	// Transactions arrived, make sure we have a valid and fresh chain to handle them
+	if !backend.AcceptTxs() {
+		return nil
+	}
+	// Transactions can be processed, parse all of them and deliver to the pool
+	var txs TransactionsPacket70
 	if err := msg.Decode(&txs); err != nil {
 		return err
 	}

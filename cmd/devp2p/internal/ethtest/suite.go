@@ -737,7 +737,6 @@ on another peer connection using GetPooledTransactions.`)
 		txs         []*types.Transaction
 		hashes      []common.Hash
 		set         = make(map[common.Hash]struct{})
-		hasPayloads = make([]bool, len(hashes))
 	)
 	for i := 0; i < count; i++ {
 		inner := &types.DynamicFeeTx{
@@ -757,6 +756,7 @@ on another peer connection using GetPooledTransactions.`)
 	}
 	s.chain.IncNonce(from, uint64(count))
 
+	var hasPayloads = make([]bool, count)
 	// Send txs.
 	if err := s.sendTxs(t, txs, hasPayloads); err != nil {
 		t.Fatalf("failed to send txs: %v", err)
@@ -810,6 +810,7 @@ the transactions using a GetPooledTransactions request.`)
 		hashes      = make([]common.Hash, count)
 		txTypes     = make([]byte, count)
 		sizes       = make([]uint32, count)
+		hasPayload  = make([]bool, count)
 	)
 	for i := 0; i < count; i++ {
 		inner := &types.DynamicFeeTx{
@@ -840,7 +841,7 @@ the transactions using a GetPooledTransactions request.`)
 	}
 
 	// Send announcement.
-	ann := eth.NewPooledTransactionHashesPacket{Types: txTypes, Sizes: sizes, Hashes: hashes}
+	ann := eth.NewPooledTransactionHashesPacket70{Types: txTypes, Sizes: sizes, Hashes: hashes, HasPayloads: hasPayload}
 	err = conn.Write(ethProto, eth.NewPooledTransactionHashesMsg, ann)
 	if err != nil {
 		t.Fatalf("failed to write to connection: %v", err)
@@ -858,9 +859,9 @@ the transactions using a GetPooledTransactions request.`)
 				t.Fatalf("unexpected number of txs requested: wanted %d, got %d", len(hashes), len(msg.GetPooledTransactionsRequest))
 			}
 			return
-		case *eth.NewPooledTransactionHashesPacket:
+		case *eth.NewPooledTransactionHashesPacket70:
 			continue
-		case *eth.TransactionsPacket:
+		case *eth.TransactionsPacket70:
 			continue
 		default:
 			t.Fatalf("unexpected %s", pretty.Sdump(msg))
@@ -928,12 +929,12 @@ func (s *Suite) TestBlobViolations(t *utesting.T) {
 		t2 = s.makeBlobTxs(2, 3, 0x2)
 	)
 	for _, test := range []struct {
-		ann  eth.NewPooledTransactionHashesPacket
+		ann  eth.NewPooledTransactionHashesPacket70
 		resp eth.PooledTransactionsResponse
 	}{
 		// Invalid tx size.
 		{
-			ann: eth.NewPooledTransactionHashesPacket{
+			ann: eth.NewPooledTransactionHashesPacket70{
 				Types:       []byte{types.BlobTxType, types.BlobTxType},
 				Sizes:       []uint32{uint32(t1[0].Size()), uint32(t1[1].Size() + 10)},
 				Hashes:      []common.Hash{t1[0].Hash(), t1[1].Hash()},
@@ -943,7 +944,7 @@ func (s *Suite) TestBlobViolations(t *utesting.T) {
 		},
 		// Wrong tx type.
 		{
-			ann: eth.NewPooledTransactionHashesPacket{
+			ann: eth.NewPooledTransactionHashesPacket70{
 				Types:       []byte{types.DynamicFeeTxType, types.BlobTxType},
 				Sizes:       []uint32{uint32(t2[0].Size()), uint32(t2[1].Size())},
 				Hashes:      []common.Hash{t2[0].Hash(), t2[1].Hash()},
@@ -1075,7 +1076,7 @@ func (s *Suite) testBadBlobTx(t *utesting.T, tx *types.Transaction, badTx *types
 			return
 		}
 
-		ann := eth.NewPooledTransactionHashesPacket{
+		ann := eth.NewPooledTransactionHashesPacket70{
 			Types:  []byte{types.BlobTxType},
 			Sizes:  []uint32{uint32(badTx.Size())},
 			Hashes: []common.Hash{badTx.Hash()},
@@ -1125,7 +1126,7 @@ func (s *Suite) testBadBlobTx(t *utesting.T, tx *types.Transaction, badTx *types
 			return
 		}
 
-		ann := eth.NewPooledTransactionHashesPacket{
+		ann := eth.NewPooledTransactionHashesPacket70{
 			Types:  []byte{types.BlobTxType},
 			Sizes:  []uint32{uint32(tx.Size())},
 			Hashes: []common.Hash{tx.Hash()},

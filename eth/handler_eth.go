@@ -59,7 +59,10 @@ func (h *ethHandler) AcceptTxs() bool {
 func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 	// Consume any broadcasts and announces, forwarding the rest to the downloader
 	switch packet := packet.(type) {
-	case *eth.NewPooledTransactionHashesPacket:
+	case *eth.NewPooledTransactionHashesPacket69:
+		return h.txFetcher.Notify(peer.ID(), packet.Types, packet.Sizes, packet.Hashes)
+
+	case *eth.NewPooledTransactionHashesPacket70:
 		err := h.txFetcher.Notify(peer.ID(), packet.Types, packet.Sizes, packet.Hashes)
 		if err != nil {
 			return err
@@ -79,7 +82,15 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		}
 		return h.blobFetcher.Notify(peer.ID(), hashes, hasPayload)
 
-	case *eth.TransactionsPacket:
+	case *eth.TransactionsPacket69:
+		for _, tx := range *packet {
+			if tx.Type() == types.BlobTxType {
+				return errors.New("disallowed broadcast blob transaction")
+			}
+		}
+		return h.txFetcher.Enqueue(peer.ID(), *packet, false)
+
+	case *eth.TransactionsPacket70:
 		var hashes []common.Hash
 		var hasPayload []bool
 		for i, tx := range packet.Txs {
@@ -110,8 +121,17 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		// in the header, disconnect from the sending peer.
 		for _, tx := range *packet {
 			if tx.Type() == types.BlobTxType {
-				if tx.BlobTxSidecar() != nil {
-					return errors.New("disallowed broadcast full-blob transaction")
+				if peer.Version() >= eth.ETH70 {
+					if tx.BlobTxSidecar() != nil {
+						return errors.New("disallowed broadcast full-blob transaction")
+					}
+				} else {
+					if tx.BlobTxSidecar() == nil {
+						return errors.New("received sidecar-less blob transaction")
+					}
+					if err := tx.BlobTxSidecar().ValidateBlobCommitmentHashes(tx.BlobHashes()); err != nil {
+						return err
+					}
 				}
 			}
 		}

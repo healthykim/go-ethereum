@@ -136,7 +136,10 @@ func (p *Peer) SendTransactions(txs types.Transactions, hasPayloads []bool) erro
 	for _, tx := range txs {
 		p.knownTxs.Add(tx.Hash())
 	}
-	return p2p.Send(p.rw, TransactionsMsg, TransactionsPacket{Txs: txs, HasPayloads: hasPayloads})
+	if p.version < ETH70 {
+		return p2p.Send(p.rw, TransactionsMsg, txs)
+	}
+	return p2p.Send(p.rw, TransactionsMsg, TransactionsPacket70{Txs: txs, HasPayloads: hasPayloads})
 }
 
 // AsyncSendTransactions queues a list of transactions (by hash) to eventually
@@ -162,7 +165,10 @@ func (p *Peer) AsyncSendTransactions(hashes []common.Hash) {
 func (p *Peer) sendPooledTransactionHashes(hashes []common.Hash, types []byte, sizes []uint32, hasPayloads []bool) error {
 	// Mark all the transactions as known, but ensure we don't overflow our limits
 	p.knownTxs.Add(hashes...)
-	return p2p.Send(p.rw, NewPooledTransactionHashesMsg, NewPooledTransactionHashesPacket{Types: types, Sizes: sizes, Hashes: hashes, HasPayloads: hasPayloads})
+	if p.version < ETH70 {
+		return p2p.Send(p.rw, NewPooledTransactionHashesMsg, NewPooledTransactionHashesPacket69{Types: types, Sizes: sizes, Hashes: hashes})
+	}
+	return p2p.Send(p.rw, NewPooledTransactionHashesMsg, NewPooledTransactionHashesPacket70{Types: types, Sizes: sizes, Hashes: hashes, HasPayloads: hasPayloads})
 }
 
 // AsyncSendPooledTransactionHashes queues a list of transactions hashes to eventually
