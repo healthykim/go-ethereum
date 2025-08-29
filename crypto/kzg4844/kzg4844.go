@@ -34,9 +34,20 @@ var (
 	blobT       = reflect.TypeOf(Blob{})
 	commitmentT = reflect.TypeOf(Commitment{})
 	proofT      = reflect.TypeOf(Proof{})
+	cellT       = reflect.TypeOf(Cell{})
 
 	CellProofsPerBlob = 128
 )
+
+type Cell [2048]byte
+
+func (c *Cell) UnmarshalJSON(input []byte) error {
+	return hexutil.UnmarshalFixedJSON(cellT, input, c[:])
+}
+
+func (c *Cell) MarshalText() ([]byte, error) {
+	return hexutil.Bytes(c[:]).MarshalText()
+}
 
 // Blob represents a 4844 data blob.
 type Blob [131072]byte
@@ -192,4 +203,20 @@ func CalcBlobHashV1(hasher hash.Hash, commit *Commitment) (vh [32]byte) {
 // IsValidVersionedHash checks that h is a structurally-valid versioned blob hash.
 func IsValidVersionedHash(h []byte) bool {
 	return len(h) == 32 && h[0] == 0x01
+}
+
+// VerifyCellProof verifies a batch of proofs corresponding to the cells and commitments.
+// Expects length of proofs, cells and cellIndices, flattened
+func VerifyCellProof(cells []Cell, commitments []Commitment, proofs []Proof, cellIndices []uint64) error {
+	if useCKZG.Load() {
+		return ckzgVerifyCellProof(cells, commitments, proofs, cellIndices)
+	}
+	return gokzgVerifyCellProof(cells, commitments, proofs, cellIndices)
+}
+
+func ComputeCells(blobs []Blob) ([]Cell, error) {
+	if useCKZG.Load() {
+		return ckzgComputeCells(blobs)
+	}
+	return gokzgComputeCells(blobs)
 }

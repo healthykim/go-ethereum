@@ -230,3 +230,59 @@ func testKZGCells(t *testing.T, ckzg bool) {
 		t.Fatalf("failed to verify KZG proof at point: %v", err)
 	}
 }
+func TestCKZGVerifyPartialCells(t *testing.T)  { testVerifyPartialCells(t, true) }
+func TestGoKZGVerifyPartialCells(t *testing.T) { testVerifyPartialCells(t, false) }
+
+func testVerifyPartialCells(t *testing.T, ckzg bool) {
+	if ckzg && !ckzgAvailable {
+		t.Skip("CKZG unavailable in this test build")
+	}
+	defer func(old bool) { useCKZG.Store(old) }(useCKZG.Load())
+	useCKZG.Store(ckzg)
+
+	const blobCount = 3
+	var blobs []*Blob
+	var commitments []Commitment
+	for range blobCount {
+		blob := randBlob()
+		commitment, err := BlobToCommitment(blob)
+		if err != nil {
+			t.Fatalf("failed to commit blob: %v", err)
+		}
+		blobs = append(blobs, blob)
+		commitments = append(commitments, commitment)
+	}
+
+	var (
+		partialCells  []Cell
+		partialProofs []Proof
+		commits       []Commitment
+		indices       []uint64
+	)
+
+	for bi, blob := range blobs {
+		proofs, err := ComputeCellProofs(blob)
+		if err != nil {
+			t.Fatalf("failed to compute cell proofs: %v", err)
+		}
+		cells, err := ComputeCells([]Blob{*blob})
+		if err != nil {
+			t.Fatalf("failed to compute cells: %v", err)
+		}
+
+		// sample 0, 31, 63, 95 cells
+		step := len(cells) / 4
+
+		sampleIdx := []int{0, step - 1, 2*step - 1, 3*step - 1}
+		for _, idx := range sampleIdx {
+			partialCells = append(partialCells, cells[idx])
+			partialProofs = append(partialProofs, proofs[idx])
+			commits = append(commits, commitments[bi])
+			indices = append(indices, uint64(idx))
+		}
+	}
+
+	if err := VerifyCellProof(partialCells, commits, partialProofs, indices); err != nil {
+		t.Fatalf("failed to verify partial cell proofs: %v", err)
+	}
+}
