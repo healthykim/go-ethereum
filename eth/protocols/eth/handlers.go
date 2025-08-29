@@ -503,37 +503,17 @@ func answerGetPooledTransactions(backend Backend, query GetPooledTransactionsReq
 	return hashes, txs
 }
 
-func handleTransactions69(backend Backend, msg Decoder, peer *Peer) error {
+func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
 	// Transactions arrived, make sure we have a valid and fresh chain to handle them
 	if !backend.AcceptTxs() {
 		return nil
 	}
 	// Transactions can be processed, parse all of them and deliver to the pool
-	var txs TransactionsPacket69
+	var txs TransactionsPacket
 	if err := msg.Decode(&txs); err != nil {
 		return err
 	}
 	for i, tx := range txs {
-		// Validate and mark the remote transaction
-		if tx == nil {
-			return fmt.Errorf("Transactions: transaction %d is nil", i)
-		}
-		peer.markTransaction(tx.Hash())
-	}
-	return backend.Handle(peer, &txs)
-}
-
-func handleTransactions70(backend Backend, msg Decoder, peer *Peer) error {
-	// Transactions arrived, make sure we have a valid and fresh chain to handle them
-	if !backend.AcceptTxs() {
-		return nil
-	}
-	// Transactions can be processed, parse all of them and deliver to the pool
-	var txs TransactionsPacket70
-	if err := msg.Decode(&txs); err != nil {
-		return err
-	}
-	for i, tx := range txs.Txs {
 		// Validate and mark the remote transaction
 		if tx == nil {
 			return fmt.Errorf("Transactions: transaction %d is nil", i)

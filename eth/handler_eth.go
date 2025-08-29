@@ -82,38 +82,13 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		}
 		return h.blobFetcher.Notify(peer.ID(), hashes, hasPayload)
 
-	case *eth.TransactionsPacket69:
+	case *eth.TransactionsPacket:
 		for _, tx := range *packet {
 			if tx.Type() == types.BlobTxType {
 				return errors.New("disallowed broadcast blob transaction")
 			}
 		}
 		return h.txFetcher.Enqueue(peer.ID(), *packet, false)
-
-	case *eth.TransactionsPacket70:
-		var hashes []common.Hash
-		var hasPayload []bool
-		for i, tx := range packet.Txs {
-			if tx.Type() == types.BlobTxType {
-				if tx.BlobTxSidecar() != nil {
-					return errors.New("disallowed broadcast full-blob transaction")
-				}
-				hashes = append(hashes, tx.Hash())
-				hasPayload = append(hasPayload, packet.HasPayloads[i])
-			}
-		}
-
-		// Check if the transaction is acceptable to the blobpool (txpool)
-		err := h.txFetcher.Enqueue(peer.ID(), packet.Txs, false)
-		if err != nil {
-			return err
-		}
-
-		if len(hashes) == 0 {
-			return nil
-		}
-		// Notify blobfetcher arrival of new type3 transactions
-		return h.blobFetcher.Notify(peer.ID(), hashes, hasPayload)
 
 	case *eth.PooledTransactionsResponse:
 		// If we receive any blob transactions missing sidecars, or with
@@ -123,7 +98,7 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 			if tx.Type() == types.BlobTxType {
 				if peer.Version() >= eth.ETH70 {
 					if tx.BlobTxSidecar() != nil {
-						return errors.New("disallowed broadcast full-blob transaction")
+						return errors.New("disallowed full-blob transaction")
 					}
 				} else {
 					if tx.BlobTxSidecar() == nil {

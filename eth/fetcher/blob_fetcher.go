@@ -38,7 +38,6 @@ type payloadDelivery struct {
 	hashes []common.Hash // Hashes of transactions that were delivered
 }
 
-// todo(healthykim): add logic for metering
 // BlobFetcher is responsible for managing type 3 transactions based on peer announcements.
 //
 // BlobFetcher manages three buffers:

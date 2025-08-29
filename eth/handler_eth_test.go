@@ -65,12 +65,8 @@ func (h *testEthHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		h.txAnnounces.Send(packet.Hashes)
 		return nil
 
-	case *eth.TransactionsPacket69:
+	case *eth.TransactionsPacket:
 		h.txBroadcasts.Send(([]*types.Transaction)(*packet))
-		return nil
-
-	case *eth.TransactionsPacket70:
-		h.txBroadcasts.Send(packet.Txs)
 		return nil
 
 	case *eth.PooledTransactionsResponse:
@@ -278,7 +274,7 @@ func testRecvTransactions(t *testing.T, protocol uint) {
 	tx := types.NewTransaction(0, common.Address{}, big.NewInt(0), 100000, big.NewInt(0), nil)
 	tx, _ = types.SignTx(tx, types.HomesteadSigner{}, testKey)
 
-	if err := src.SendTransactions([]*types.Transaction{tx}, []bool{false}); err != nil {
+	if err := src.SendTransactions([]*types.Transaction{tx}); err != nil {
 		t.Fatalf("failed to send transaction: %v", err)
 	}
 	select {

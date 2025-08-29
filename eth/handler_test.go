@@ -191,10 +191,8 @@ func (p *testTxPool) ReportAvailability(txHashes []common.Hash, available bool, 
 
 	// add blobsidecars to the storage
 	for i, hash := range txHashes {
-		tx, _ := p.pool[hash]
-
 		if i < len(blobSidecars) && blobSidecars[i] != nil {
-			tx = tx.WithBlobTxSidecar(blobSidecars[i])
+			p.pool[hash] = p.pool[hash].WithBlobTxSidecar(blobSidecars[i])
 		}
 	}
 	return nil

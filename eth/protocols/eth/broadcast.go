@@ -44,18 +44,12 @@ func (p *Peer) broadcastTransactions() {
 			var (
 				hashesCount uint64
 				txs         []*types.Transaction
-				hasPayloads []bool
 				size        common.StorageSize
 			)
 			for i := 0; i < len(queue) && size < maxTxPacketSize; i++ {
-				meta := p.txpool.GetMetadata(queue[i])
-				tx := p.txpool.Get(queue[i])
-				if tx != nil && meta != nil {
-					txWithoutBlob := tx.WithoutBlobTxSidecar()
-					txs = append(txs, txWithoutBlob)
-					hasPayloads = append(hasPayloads, meta.HasPayload)
-					txSize := common.StorageSize(txWithoutBlob.Size())
-					size += txSize
+				if tx := p.txpool.Get(queue[i]); tx != nil {
+					txs = append(txs, tx)
+					size += common.StorageSize(tx.Size())
 				}
 				hashesCount++
 			}
@@ -65,11 +59,12 @@ func (p *Peer) broadcastTransactions() {
 			if len(txs) > 0 {
 				done = make(chan struct{})
 				go func() {
-					if err := p.SendTransactions(txs, hasPayloads); err != nil {
+					if err := p.SendTransactions(txs); err != nil {
 						fail <- err
 						return
 					}
 					close(done)
+					p.Log().Trace("Sent transactions", "count", len(txs))
 				}()
 			}
 		}
@@ -78,7 +73,6 @@ func (p *Peer) broadcastTransactions() {
 		case hashes := <-p.txBroadcast:
 			// If the connection failed, discard all transaction events
 			if failed {
-				p.Log().Info("Connection Failed")
 				continue
 			}
 			// New batch of transactions to be broadcast, queue them (with cap)

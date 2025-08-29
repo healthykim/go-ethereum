@@ -632,7 +632,7 @@ transaction gets propagated.`)
 	if err != nil {
 		t.Fatalf("failed to sign tx: %v", err)
 	}
-	if err := s.sendTxs(t, []*types.Transaction{tx}, []bool{false}); err != nil {
+	if err := s.sendTxs(t, []*types.Transaction{tx}); err != nil {
 		t.Fatal(err)
 	}
 	s.chain.IncNonce(from, 1)
@@ -660,7 +660,7 @@ does not propagate them.`)
 	if err != nil {
 		t.Fatalf("failed to sign tx: %v", err)
 	}
-	if err := s.sendTxs(t, []*types.Transaction{tx}, []bool{false}); err != nil {
+	if err := s.sendTxs(t, []*types.Transaction{tx}); err != nil {
 		t.Fatalf("failed to send txs: %v", err)
 	}
 	s.chain.IncNonce(from, 1)
@@ -756,9 +756,8 @@ on another peer connection using GetPooledTransactions.`)
 	}
 	s.chain.IncNonce(from, uint64(count))
 
-	var hasPayloads = make([]bool, count)
 	// Send txs.
-	if err := s.sendTxs(t, txs, hasPayloads); err != nil {
+	if err := s.sendTxs(t, txs); err != nil {
 		t.Fatalf("failed to send txs: %v", err)
 	}
 
@@ -861,7 +860,7 @@ the transactions using a GetPooledTransactions request.`)
 			return
 		case *eth.NewPooledTransactionHashesPacket70:
 			continue
-		case *eth.TransactionsPacket70:
+		case *eth.TransactionsPacket:
 			continue
 		default:
 			t.Fatalf("unexpected %s", pretty.Sdump(msg))

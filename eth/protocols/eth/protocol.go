@@ -129,13 +129,8 @@ func (p *NewBlockHashesPacket) Unpack() ([]common.Hash, []uint64) {
 	return hashes, numbers
 }
 
-type TransactionsPacket69 []*types.Transaction
-
 // TransactionsPacket is the network packet for broadcasting new transactions.
-type TransactionsPacket70 struct {
-	Txs         []*types.Transaction
-	HasPayloads []bool
-}
+type TransactionsPacket []*types.Transaction
 
 // GetBlockHeadersRequest represents a block header query.
 type GetBlockHeadersRequest struct {
@@ -381,11 +376,8 @@ func (*StatusPacket69) Kind() byte   { return StatusMsg }
 func (*NewBlockHashesPacket) Name() string { return "NewBlockHashes" }
 func (*NewBlockHashesPacket) Kind() byte   { return NewBlockHashesMsg }
 
-func (*TransactionsPacket69) Name() string { return "Transactions" }
-func (*TransactionsPacket69) Kind() byte   { return TransactionsMsg }
-
-func (*TransactionsPacket70) Name() string { return "Transactions" }
-func (*TransactionsPacket70) Kind() byte   { return TransactionsMsg }
+func (*TransactionsPacket) Name() string { return "Transactions" }
+func (*TransactionsPacket) Kind() byte   { return TransactionsMsg }
 
 func (*GetBlockHeadersRequest) Name() string { return "GetBlockHeaders" }
 func (*GetBlockHeadersRequest) Kind() byte   { return GetBlockHeadersMsg }

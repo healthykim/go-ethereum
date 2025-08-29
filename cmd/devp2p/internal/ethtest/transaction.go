@@ -30,7 +30,7 @@ import (
 
 // sendTxs sends the given transactions to the node and
 // expects the node to accept and propagate them.
-func (s *Suite) sendTxs(t *utesting.T, txs []*types.Transaction, hasPayloads []bool) error {
+func (s *Suite) sendTxs(t *utesting.T, txs []*types.Transaction) error {
 	// Open sending conn.
 	sendConn, err := s.dial()
 	if err != nil {
@@ -51,7 +51,7 @@ func (s *Suite) sendTxs(t *utesting.T, txs []*types.Transaction, hasPayloads []b
 		return fmt.Errorf("peering failed: %v", err)
 	}
 
-	if err = sendConn.Write(ethProto, eth.TransactionsMsg, eth.TransactionsPacket70{Txs: txs, HasPayloads: hasPayloads}); err != nil {
+	if err = sendConn.Write(ethProto, eth.TransactionsMsg, eth.TransactionsPacket(txs)); err != nil {
 		return fmt.Errorf("failed to write message to connection: %v", err)
 	}
 
@@ -67,8 +67,8 @@ func (s *Suite) sendTxs(t *utesting.T, txs []*types.Transaction, hasPayloads []b
 			return fmt.Errorf("failed to read from connection: %w", err)
 		}
 		switch msg := msg.(type) {
-		case *eth.TransactionsPacket70:
-			for _, tx := range msg.Txs {
+		case *eth.TransactionsPacket:
+			for _, tx := range *msg {
 				got[tx.Hash()] = true
 			}
 		case *eth.NewPooledTransactionHashesPacket70:
@@ -150,7 +150,7 @@ func (s *Suite) sendInvalidTxs(t *utesting.T, txs []*types.Transaction) error {
 		}
 
 		switch msg := msg.(type) {
-		case *eth.TransactionsPacket70:
+		case *eth.TransactionsPacket:
 			for _, tx := range txs {
 				if _, ok := invalids[tx.Hash()]; ok {
 					return fmt.Errorf("received bad tx: %s", tx.Hash())
