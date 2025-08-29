@@ -98,7 +98,6 @@ var caps = []string{
 	"engine_getPayloadV5",
 	"engine_getBlobsV1",
 	"engine_getBlobsV2",
-	"engine_getIncludableBlobs",
 	"engine_changeBlobpoolMode",
 	"engine_cellVerification",
 	"engine_newPayloadV1",
@@ -402,11 +401,6 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 		return valid(&id), nil
 	}
 	return valid(nil), nil
-}
-
-// todo(healthykim) blob ID calculation logic
-func (api *ConsensusAPI) GetIncludableBlobs(returnSize uint8, windowSize uint8) ([]*engine.IncludableBlob, error) {
-	return api.eth.Miner().GetIncludableBlobs(returnSize, windowSize)
 }
 
 // Eager mode - Fetch every blob tx arriving from the time this method is called

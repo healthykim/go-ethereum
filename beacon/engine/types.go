@@ -128,14 +128,6 @@ type BlobAndProofV2 struct {
 	CellProofs []hexutil.Bytes `json:"proofs"`
 }
 
-type IncludableBlob struct {
-	TxHash        common.Hash     `json:"txHash"`
-	BlobIndex     uint            `json:"blobIndex"`
-	Blob          hexutil.Bytes   `json:"blob"`
-	KzgCommitment hexutil.Bytes   `json:"kzgCommitment"`
-	CellProofs    []hexutil.Bytes `json:"cellProofs"`
-}
-
 // JSON type overrides for ExecutionPayloadEnvelope.
 type executionPayloadEnvelopeMarshaling struct {
 	BlockValue *hexutil.Big

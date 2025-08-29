@@ -16,14 +16,10 @@ import (
 
 var blobFetchTimeout = 5 * time.Second
 
-type status int
-
 const (
 	AvailabilityThreshold = 1
-	// TODO(healthykim): should we limit the maximum payload size to fetch
-	maxPayloadRetrievalSize = 128 * 1024
-	maxPayloadRetrievals    = 1
-	maxPayloadAnnounces     = 4096
+	maxPayloadRetrievals  = 1
+	maxPayloadAnnounces   = 4096
 )
 
 type blobTxAnnounce struct {
