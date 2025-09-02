@@ -286,3 +286,48 @@ func testVerifyPartialCells(t *testing.T, ckzg bool) {
 		t.Fatalf("failed to verify partial cell proofs: %v", err)
 	}
 }
+
+func TestCKZGRecoverBlob(t *testing.T)  { testRecoverBlob(t, true) }
+func TestGoKZGRecoverBlob(t *testing.T) { testRecoverBlob(t, false) }
+
+func testRecoverBlob(t *testing.T, ckzg bool) {
+	if ckzg && !ckzgAvailable {
+		t.Skip("CKZG unavailable in this test build")
+	}
+	defer func(old bool) { useCKZG.Store(old) }(useCKZG.Load())
+	useCKZG.Store(ckzg)
+
+	var blob = randBlob()
+	cells, err := ComputeCells([]Blob{*blob})
+	if err != nil {
+		t.Fatalf("failed to compute cells: %v", err)
+	}
+	proof, err := ComputeCellProofs(blob)
+	if err != nil {
+		t.Fatalf("failed to compute proof: %v", err)
+	}
+	commitment, err := BlobToCommitment(blob)
+	if err != nil {
+		t.Fatalf("failed to compute commitment: %v", err)
+	}
+
+	var (
+		partialCells []Cell
+		indices      []uint64
+	)
+
+	for ci, cell := range cells {
+		partialCells = append(partialCells, cell)
+		indices = append(indices, uint64(ci))
+	}
+
+	recoverBlob, err := RecoverBlob(partialCells, indices)
+
+	if err != nil {
+		t.Fatalf("failed to recover blob: %v", err)
+	}
+
+	if err := VerifyCellProofs([]Blob{recoverBlob}, []Commitment{commitment}, proof); err != nil {
+		t.Fatalf("failed to verify recovered blob: %v", err)
+	}
+}

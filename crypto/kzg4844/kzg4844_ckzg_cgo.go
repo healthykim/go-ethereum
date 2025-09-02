@@ -238,3 +238,26 @@ func ckzgComputeCells(blobs []Blob) ([]Cell, error) {
 	}
 	return cells, nil
 }
+
+func ckzgRecoverBlob(cells []Cell, cellIndices []uint64) (Blob, error) {
+	ckzgIniter.Do(ckzgInit)
+
+	var kzgcells = make([]ckzg4844.Cell, 0, len(cells))
+
+	for _, cell := range cells {
+		kzgcells = append(kzgcells, ckzg4844.Cell(cell))
+	}
+
+	extCells, _, err := ckzg4844.RecoverCellsAndKZGProofs(cellIndices, kzgcells)
+	if err != nil {
+		return Blob{}, err
+	}
+
+	var result Blob
+	offset := 0
+	for _, cell := range extCells[:64] {
+		copy(result[offset:], cell[:])
+		offset += len(cell)
+	}
+	return result, nil
+}

@@ -1377,7 +1377,6 @@ func (p *BlobPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
 // GetBlobs returns a number of blobs and proofs for the given versioned hashes.
 // This is a utility method for the engine API, enabling consensus clients to
 // retrieve blobs from the pools directly instead of the network.
-// TODO Q. Duplication?
 func (p *BlobPool) GetBlobs(vhashes []common.Hash) []*types.BlobTxSidecar {
 	sidecars := make([]*types.BlobTxSidecar, len(vhashes))
 	for idx, vhash := range vhashes {

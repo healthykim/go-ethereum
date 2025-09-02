@@ -220,3 +220,11 @@ func ComputeCells(blobs []Blob) ([]Cell, error) {
 	}
 	return gokzgComputeCells(blobs)
 }
+
+func RecoverBlob(cells []Cell, cellIndices []uint64) (Blob, error) {
+	if useCKZG.Load() {
+		return ckzgRecoverBlob(cells, cellIndices)
+	}
+	return gokzgRecoverBlob(cells, cellIndices)
+
+}
