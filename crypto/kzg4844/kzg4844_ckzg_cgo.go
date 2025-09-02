@@ -191,7 +191,7 @@ func ckzgVerifyCellProofBatch(blobs []Blob, commitments []Commitment, cellProofs
 	return nil
 }
 
-func ckzgVerifyCellProof(cells []Cell, commitments []Commitment, cellProofs []Proof, cellIndices []uint64) error {
+func ckzgVerifyCells(cells []Cell, commitments []Commitment, cellProofs []Proof, cellIndices []uint64) error {
 	ckzgIniter.Do(ckzgInit)
 	var (
 		proofs   = make([]ckzg4844.Bytes48, len(cellProofs))

@@ -207,11 +207,11 @@ func IsValidVersionedHash(h []byte) bool {
 
 // VerifyCellProof verifies a batch of proofs corresponding to the cells and commitments.
 // Expects length of proofs, cells and cellIndices, flattened
-func VerifyCellProof(cells []Cell, commitments []Commitment, proofs []Proof, cellIndices []uint64) error {
+func VerifyCells(cells []Cell, commitments []Commitment, proofs []Proof, cellIndices []uint64) error {
 	if useCKZG.Load() {
-		return ckzgVerifyCellProof(cells, commitments, proofs, cellIndices)
+		return ckzgVerifyCells(cells, commitments, proofs, cellIndices)
 	}
-	return gokzgVerifyCellProof(cells, commitments, proofs, cellIndices)
+	return gokzgVerifyCells(cells, commitments, proofs, cellIndices)
 }
 
 func ComputeCells(blobs []Blob) ([]Cell, error) {

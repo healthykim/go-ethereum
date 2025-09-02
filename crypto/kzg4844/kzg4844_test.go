@@ -282,7 +282,7 @@ func testVerifyPartialCells(t *testing.T, ckzg bool) {
 		}
 	}
 
-	if err := VerifyCellProof(partialCells, commits, partialProofs, indices); err != nil {
+	if err := VerifyCells(partialCells, commits, partialProofs, indices); err != nil {
 		t.Fatalf("failed to verify partial cell proofs: %v", err)
 	}
 }

@@ -151,7 +151,7 @@ func gokzgVerifyCellProofBatch(blobs []Blob, commitments []Commitment, cellProof
 }
 
 // gokzgVerifyCell verifies that the cell data corresponds to the provided commitment.
-func gokzgVerifyCellProof(cells []Cell, commitments []Commitment, cellProofs []Proof, cellIndices []uint64) error {
+func gokzgVerifyCells(cells []Cell, commitments []Commitment, cellProofs []Proof, cellIndices []uint64) error {
 	gokzgIniter.Do(gokzgInit)
 	var (
 		proofs   = make([]gokzg4844.KZGProof, len(cellProofs))
