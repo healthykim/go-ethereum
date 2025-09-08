@@ -1140,14 +1140,7 @@ func (p *BlobPool) checkDelegationLimit(tx *types.Transaction) error {
 
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
-func (p *BlobPool) validateTx(tx *types.Transaction, sidecar *types.BlobTxSidecar) error {
-	if err := txpool.ValidateBlobSidecar(tx, sidecar, p.head, &txpool.ValidationOptions{
-		Config:       p.chain.Config(),
-		MaxBlobCount: maxBlobsPerTx,
-	}); err != nil {
-		return err
-	}
-
+func (p *BlobPool) validateTx(tx *types.Transaction) error {
 	if err := p.ValidateTxBasics(tx); err != nil {
 		return err
 	}
@@ -1457,7 +1450,7 @@ func (p *BlobPool) Add(txs []*types.Transaction, sync bool) []error {
 		if errs[i] != nil {
 			continue
 		}
-		errs[i] = p.add(tx.WithoutBlobTxSidecar(), tx.BlobTxSidecar())
+		errs[i] = p.add(tx)
 		if errs[i] == nil {
 			adds = append(adds, tx.WithoutBlobTxSidecar())
 		}
@@ -1471,7 +1464,7 @@ func (p *BlobPool) Add(txs []*types.Transaction, sync bool) []error {
 
 // add inserts a new blob transaction into the pool if it passes validation (both
 // consensus validity and pool restrictions).
-func (p *BlobPool) add(tx *types.Transaction, sidecar *types.BlobTxSidecar) (err error) {
+func (p *BlobPool) add(tx *types.Transaction) (err error) {
 	// The blob pool blocks on adding a transaction. This is because blob txs are
 	// only even pulled from the network, so this method will act as the overload
 	// protection for fetches.
@@ -1485,7 +1478,7 @@ func (p *BlobPool) add(tx *types.Transaction, sidecar *types.BlobTxSidecar) (err
 	}(time.Now())
 
 	// Ensure the transaction is valid from all perspectives
-	if err := p.validateTx(tx, sidecar); err != nil {
+	if err := p.validateTx(tx); err != nil {
 		log.Trace("Transaction validation failed", "hash", tx.Hash(), "err", err)
 		switch {
 		case errors.Is(err, txpool.ErrUnderpriced):
@@ -1527,9 +1520,6 @@ func (p *BlobPool) add(tx *types.Transaction, sidecar *types.BlobTxSidecar) (err
 			}
 		}()
 	}
-
-	//todo(healthykim) remove this and seperate database or introduce list
-	tx = tx.WithBlobTxSidecar(sidecar)
 	// Transaction permitted into the pool from a nonce and cost perspective,
 	// insert it into the database and update the indices
 	blob, err := rlp.EncodeToBytes(tx)

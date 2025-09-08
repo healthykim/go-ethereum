@@ -63,6 +63,9 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if opts.Accept&(1<<tx.Type()) == 0 {
 		return fmt.Errorf("%w: tx type %v not supported by this pool", core.ErrTxTypeNotSupported, tx.Type())
 	}
+	if blobCount := len(tx.BlobHashes()); blobCount > opts.MaxBlobCount {
+		return fmt.Errorf("%w: blob count %v, limit %v", ErrTxBlobLimitExceeded, blobCount, opts.MaxBlobCount)
+	}
 	// Before performing any expensive validations, sanity check that the tx is
 	// smaller than the maximum limit the pool can meaningfully handle
 	if tx.Size() > opts.MaxSize {
@@ -136,6 +139,9 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if tx.GasTipCapIntCmp(opts.MinTip) < 0 {
 		return fmt.Errorf("%w: gas tip cap %v, minimum needed %v", ErrTxGasPriceTooLow, tx.GasTipCap(), opts.MinTip)
 	}
+	if tx.Type() == types.BlobTxType {
+		return validateBlobTx(tx, head, opts)
+	}
 	if tx.Type() == types.SetCodeTxType {
 		if len(tx.SetCodeAuthorizations()) == 0 {
 			return errors.New("set code tx must have at least one authorization tuple")
@@ -144,33 +150,32 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	return nil
 }
 
-func ValidateBlobSidecar(tx *types.Transaction, sidecar *types.BlobTxSidecar, head *types.Header, opts *ValidationOptions) error {
+// validateBlobTx implements the blob-transaction specific validations.
+func validateBlobTx(tx *types.Transaction, head *types.Header, opts *ValidationOptions) error {
+	sidecar := tx.BlobTxSidecar()
 	if sidecar == nil {
-		return errors.New("blob transaction without sidecar")
+		return errors.New("missing sidecar in blob transaction")
 	}
-
 	// Ensure the blob fee cap satisfies the minimum blob gas price
 	if tx.BlobGasFeeCapIntCmp(blobTxMinBlobGasPrice) < 0 {
 		return fmt.Errorf("%w: blob fee cap %v, minimum needed %v", ErrTxGasPriceTooLow, tx.BlobGasFeeCap(), blobTxMinBlobGasPrice)
 	}
-	// Verify whether the blob count is consistent with other parts of the sidecar and the transaction
-	if sidecar.Custody.OneCount() == 0 {
-		return errors.New("blob transaction without custody")
-	}
-	blobCount := len(sidecar.Cells) / sidecar.Custody.OneCount()
+	// Ensure the number of items in the blob transaction and various side
+	// data match up before doing any expensive validations
 	hashes := tx.BlobHashes()
-	if blobCount == 0 {
+	if len(hashes) == 0 {
 		return errors.New("blobless blob transaction")
 	}
+	if len(hashes) > params.BlobTxMaxBlobs {
+		return fmt.Errorf("too many blobs in transaction: have %d, permitted %d", len(hashes), params.BlobTxMaxBlobs)
+	}
+	if sidecar.Custody.OneCount() == 0 {
+		return errors.New("blob transaction without any custody cells")
+	}
+	blobCount := len(sidecar.Cells) / sidecar.Custody.OneCount()
 	if blobCount != len(sidecar.Commitments) || blobCount != len(hashes) {
 		return fmt.Errorf("invalid number of %d blobs compared to %d commitments and %d blob hashes", blobCount, len(sidecar.Commitments), len(tx.BlobHashes()))
 	}
-
-	// Check whether the blob count does not exceed the max blob count
-	if blobCount > opts.MaxBlobCount {
-		return fmt.Errorf("%w: blob count %v, limit %v", ErrTxBlobLimitExceeded, blobCount, opts.MaxBlobCount)
-	}
-
 	if err := sidecar.ValidateBlobCommitmentHashes(hashes); err != nil {
 		return err
 	}
