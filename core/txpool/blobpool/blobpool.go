@@ -1140,9 +1140,8 @@ func (p *BlobPool) checkDelegationLimit(tx *types.Transaction) error {
 
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
-func (p *BlobPool) validateTx(tx *types.Transaction, cellSidecars *types.BlobTxCellSidecar) error {
-
-	if err := txpool.ValidateBlobSidecar(tx, cellSidecars, p.head, &txpool.ValidationOptions{
+func (p *BlobPool) validateTx(tx *types.Transaction, sidecar *types.BlobTxSidecar) error {
+	if err := txpool.ValidateBlobSidecar(tx, sidecar, p.head, &txpool.ValidationOptions{
 		Config:       p.chain.Config(),
 		MaxBlobCount: maxBlobsPerTx,
 	}); err != nil {
@@ -1354,6 +1353,11 @@ func (p *BlobPool) GetBlobs(vhashes []common.Hash, version byte) ([]*kzg4844.Blo
 		if sidecar == nil {
 			return nil, nil, nil, fmt.Errorf("blob tx without sidecar %x", tx.Hash())
 		}
+
+		recoveredBlobs, err := kzg4844.RecoverBlobs(sidecar.Cells, sidecar.Custody.Indices())
+		if err != nil {
+			return nil, nil, nil, err
+		}
 		// Traverse the blobs in the transaction
 		for i, hash := range tx.BlobHashes() {
 			list, ok := indices[hash]
@@ -1366,7 +1370,7 @@ func (p *BlobPool) GetBlobs(vhashes []common.Hash, version byte) ([]*kzg4844.Blo
 				if sidecar.Version == types.BlobSidecarVersion0 {
 					pf = []kzg4844.Proof{sidecar.Proofs[i]}
 				} else {
-					proof, err := kzg4844.ComputeBlobProof(&sidecar.Blobs[i], sidecar.Commitments[i])
+					proof, err := kzg4844.ComputeBlobProof(&recoveredBlobs[i], sidecar.Commitments[i])
 					if err != nil {
 						return nil, nil, nil, err
 					}
@@ -1374,7 +1378,7 @@ func (p *BlobPool) GetBlobs(vhashes []common.Hash, version byte) ([]*kzg4844.Blo
 				}
 			case types.BlobSidecarVersion1:
 				if sidecar.Version == types.BlobSidecarVersion0 {
-					cellProofs, err := kzg4844.ComputeCellProofs(&sidecar.Blobs[i])
+					cellProofs, err := kzg4844.ComputeCellProofs(&recoveredBlobs[i])
 					if err != nil {
 						return nil, nil, nil, err
 					}
@@ -1388,7 +1392,7 @@ func (p *BlobPool) GetBlobs(vhashes []common.Hash, version byte) ([]*kzg4844.Blo
 				}
 			}
 			for _, index := range list {
-				blobs[index] = &sidecar.Blobs[i]
+				blobs[index] = &recoveredBlobs[i]
 				commitments[index] = sidecar.Commitments[i]
 				proofs[index] = pf
 			}
@@ -1453,8 +1457,7 @@ func (p *BlobPool) Add(txs []*types.Transaction, sync bool) []error {
 		if errs[i] != nil {
 			continue
 		}
-		cellSidecar := tx.BlobTxSidecar().ToBlobTxCellSidecar()
-		errs[i] = p.add(tx.WithoutBlobTxSidecar(), cellSidecar)
+		errs[i] = p.add(tx.WithoutBlobTxSidecar(), tx.BlobTxSidecar())
 		if errs[i] == nil {
 			adds = append(adds, tx.WithoutBlobTxSidecar())
 		}
@@ -1468,7 +1471,7 @@ func (p *BlobPool) Add(txs []*types.Transaction, sync bool) []error {
 
 // add inserts a new blob transaction into the pool if it passes validation (both
 // consensus validity and pool restrictions).
-func (p *BlobPool) add(tx *types.Transaction, cellSidecar *types.BlobTxCellSidecar) (err error) {
+func (p *BlobPool) add(tx *types.Transaction, sidecar *types.BlobTxSidecar) (err error) {
 	// The blob pool blocks on adding a transaction. This is because blob txs are
 	// only even pulled from the network, so this method will act as the overload
 	// protection for fetches.
@@ -1482,7 +1485,7 @@ func (p *BlobPool) add(tx *types.Transaction, cellSidecar *types.BlobTxCellSidec
 	}(time.Now())
 
 	// Ensure the transaction is valid from all perspectives
-	if err := p.validateTx(tx, cellSidecar); err != nil {
+	if err := p.validateTx(tx, sidecar); err != nil {
 		log.Trace("Transaction validation failed", "hash", tx.Hash(), "err", err)
 		switch {
 		case errors.Is(err, txpool.ErrUnderpriced):
@@ -1526,8 +1529,7 @@ func (p *BlobPool) add(tx *types.Transaction, cellSidecar *types.BlobTxCellSidec
 	}
 
 	//todo(healthykim) remove this and seperate database or introduce list
-	blobSidecar := cellSidecar.ToBlobTxSidecar()
-	tx = tx.WithBlobTxSidecar(blobSidecar)
+	tx = tx.WithBlobTxSidecar(sidecar)
 	// Transaction permitted into the pool from a nonce and cost perspective,
 	// insert it into the database and update the indices
 	blob, err := rlp.EncodeToBytes(tx)

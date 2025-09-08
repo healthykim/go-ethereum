@@ -24,6 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie"
 )
@@ -333,8 +334,9 @@ func BlockToExecutableData(block *types.Block, fees *big.Int, sidecars []*types.
 		Proofs:      make([]hexutil.Bytes, 0),
 	}
 	for _, sidecar := range sidecars {
-		for j := range sidecar.Blobs {
-			bundle.Blobs = append(bundle.Blobs, hexutil.Bytes(sidecar.Blobs[j][:]))
+		blobs, _ := kzg4844.RecoverBlobs(sidecar.Cells, sidecar.Custody.Indices())
+		for j := range blobs {
+			bundle.Blobs = append(bundle.Blobs, hexutil.Bytes(blobs[j][:]))
 			bundle.Commitments = append(bundle.Commitments, hexutil.Bytes(sidecar.Commitments[j][:]))
 		}
 		for _, proof := range sidecar.Proofs {

@@ -5,10 +5,10 @@ import (
 	"math/bits"
 )
 
-// `CustodyBitmap` is a bitmap to represent which custody index to store (little endian)
-type CustodyBitmap [16]byte
-
 const CustodySize = 128
+
+// `CustodyBitmap` is a bitmap to represent which custody index to store (little endian)
+type CustodyBitmap [CustodySize / 8]byte
 
 func (b CustodyBitmap) IsSet(i uint) bool {
 	if i >= CustodySize {

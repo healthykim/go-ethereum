@@ -310,7 +310,7 @@ func (miner *Miner) commitBlobTransaction(env *environment, tx *types.Transactio
 	// and not during execution. This means core.ApplyTransaction will not return an error if the
 	// tx has too many blobs. So we have to explicitly check it here.
 	maxBlobs := eip4844.MaxBlobsPerBlock(miner.chainConfig, env.header.Time)
-	if env.blobs+len(sc.Blobs) > maxBlobs {
+	if env.blobs+sc.BlobCount() > maxBlobs {
 		return errors.New("max data blobs reached")
 	}
 	receipt, err := miner.applyTransaction(env, tx)
@@ -321,7 +321,7 @@ func (miner *Miner) commitBlobTransaction(env *environment, tx *types.Transactio
 	env.txs = append(env.txs, txNoBlob)
 	env.receipts = append(env.receipts, receipt)
 	env.sidecars = append(env.sidecars, sc)
-	env.blobs += len(sc.Blobs)
+	env.blobs += sc.BlobCount()
 	env.size += txNoBlob.Size()
 	*env.header.BlobGasUsed += receipt.BlobGasUsed
 	env.tcount++

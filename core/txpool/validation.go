@@ -144,13 +144,20 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	return nil
 }
 
-func ValidateBlobSidecar(tx *types.Transaction, sidecar *types.BlobTxCellSidecar, head *types.Header, opts *ValidationOptions) error {
+func ValidateBlobSidecar(tx *types.Transaction, sidecar *types.BlobTxSidecar, head *types.Header, opts *ValidationOptions) error {
+	if sidecar == nil {
+		return errors.New("blob transaction without sidecar")
+	}
+
 	// Ensure the blob fee cap satisfies the minimum blob gas price
 	if tx.BlobGasFeeCapIntCmp(blobTxMinBlobGasPrice) < 0 {
 		return fmt.Errorf("%w: blob fee cap %v, minimum needed %v", ErrTxGasPriceTooLow, tx.BlobGasFeeCap(), blobTxMinBlobGasPrice)
 	}
 	// Verify whether the blob count is consistent with other parts of the sidecar and the transaction
-	blobCount := len(sidecar.Cells) / sidecar.CellIndices.OneCount()
+	if sidecar.Custody.OneCount() == 0 {
+		return errors.New("blob transaction without custody")
+	}
+	blobCount := len(sidecar.Cells) / sidecar.Custody.OneCount()
 	hashes := tx.BlobHashes()
 	if blobCount == 0 {
 		return errors.New("blobless blob transaction")
@@ -174,14 +181,14 @@ func ValidateBlobSidecar(tx *types.Transaction, sidecar *types.BlobTxCellSidecar
 	return validateBlobSidecarLegacy(sidecar, hashes)
 }
 
-func validateBlobSidecarLegacy(sidecar *types.BlobTxCellSidecar, hashes []common.Hash) error {
+func validateBlobSidecarLegacy(sidecar *types.BlobTxSidecar, hashes []common.Hash) error {
 	if sidecar.Version != types.BlobSidecarVersion0 {
 		return fmt.Errorf("invalid sidecar version pre-osaka: %v", sidecar.Version)
 	}
 	if len(sidecar.Proofs) != len(hashes) {
 		return fmt.Errorf("invalid number of %d blob proofs expected %d", len(sidecar.Proofs), len(hashes))
 	}
-	blobs, err := kzg4844.RecoverBlobs(sidecar.Cells, sidecar.CellIndices.Indices())
+	blobs, err := kzg4844.RecoverBlobs(sidecar.Cells, sidecar.Custody.Indices())
 	if err != nil {
 		return err
 	}
@@ -193,14 +200,14 @@ func validateBlobSidecarLegacy(sidecar *types.BlobTxCellSidecar, hashes []common
 	return nil
 }
 
-func validateBlobSidecarOsaka(sidecar *types.BlobTxCellSidecar, hashes []common.Hash) error {
+func validateBlobSidecarOsaka(sidecar *types.BlobTxSidecar, hashes []common.Hash) error {
 	if sidecar.Version != types.BlobSidecarVersion1 {
 		return fmt.Errorf("invalid sidecar version post-osaka: %v", sidecar.Version)
 	}
 	if len(sidecar.Proofs) != len(hashes)*kzg4844.CellProofsPerBlob {
 		return fmt.Errorf("invalid number of %d blob proofs expected %d", len(sidecar.Proofs), len(hashes)*kzg4844.CellProofsPerBlob)
 	}
-	return kzg4844.VerifyCells(sidecar.Cells, sidecar.Commitments, sidecar.Proofs, sidecar.CellIndices.Indices())
+	return kzg4844.VerifyCells(sidecar.Cells, sidecar.Commitments, sidecar.Proofs, sidecar.Custody.Indices())
 }
 
 // ValidationOptionsWithState define certain differences between stateful transaction

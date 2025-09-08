@@ -150,7 +150,11 @@ func (tx *Transaction) MarshalJSON() ([]byte, error) {
 		yparity := itx.V.Uint64()
 		enc.YParity = (*hexutil.Uint64)(&yparity)
 		if sidecar := itx.Sidecar; sidecar != nil {
-			enc.Blobs = itx.Sidecar.Blobs
+			blobs, err := kzg4844.RecoverBlobs(itx.Sidecar.Cells, itx.Sidecar.Custody.Indices())
+			if err != nil {
+				return nil, err
+			}
+			enc.Blobs = blobs
 			enc.Commitments = itx.Sidecar.Commitments
 			enc.Proofs = itx.Sidecar.Proofs
 		}

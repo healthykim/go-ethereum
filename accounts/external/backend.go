@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -241,7 +242,11 @@ func (api *ExternalSigner) SignTx(account accounts.Account, tx *types.Transactio
 		if sidecar == nil {
 			return nil, errors.New("blobs must be present for signing")
 		}
-		args.Blobs = sidecar.Blobs
+		blobs, err := kzg4844.RecoverBlobs(sidecar.Cells, sidecar.Custody.Indices())
+		if err != nil {
+			return nil, err
+		}
+		args.Blobs = blobs
 		args.Commitments = sidecar.Commitments
 		args.Proofs = sidecar.Proofs
 	}
