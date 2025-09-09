@@ -248,8 +248,19 @@ func ckzgComputeCells(blobs []Blob) ([]Cell, error) {
 func ckzgRecoverBlobs(cells []Cell, cellIndices []uint64) ([]Blob, error) {
 	ckzgIniter.Do(ckzgInit)
 
-	if len(cells)%len(cellIndices) != 0 {
+	if len(cellIndices) == 0 || len(cells)%len(cellIndices) != 0 {
 		return []Blob{}, errors.New("cells with wrong length")
+	}
+
+	noRecover := false
+	if len(cellIndices) > 64 {
+		noRecover = true
+		for i, idx := range cellIndices {
+			if uint64(i) != idx {
+				noRecover = false
+				break
+			}
+		}
 	}
 
 	blobCount := len(cells) / len(cellIndices)
@@ -257,22 +268,30 @@ func ckzgRecoverBlobs(cells []Cell, cellIndices []uint64) ([]Blob, error) {
 
 	offset := 0
 	for range blobCount {
-		var kzgcells = make([]ckzg4844.Cell, 0, len(cellIndices))
+		if noRecover {
+			var blob Blob
+			for i, cell := range cells[offset : offset+64] {
+				copy(blob[i*len(cell):], cell[:])
+			}
+			blobs = append(blobs, blob)
+		} else {
+			var kzgcells = make([]ckzg4844.Cell, 0, len(cellIndices))
 
-		for _, cell := range cells[offset : offset+len(cellIndices)] {
-			kzgcells = append(kzgcells, ckzg4844.Cell(cell))
-		}
+			for _, cell := range cells[offset : offset+len(cellIndices)] {
+				kzgcells = append(kzgcells, ckzg4844.Cell(cell))
+			}
 
-		extCells, _, err := ckzg4844.RecoverCellsAndKZGProofs(cellIndices, kzgcells)
-		if err != nil {
-			return []Blob{}, err
-		}
+			extCells, _, err := ckzg4844.RecoverCellsAndKZGProofs(cellIndices, kzgcells)
+			if err != nil {
+				return []Blob{}, err
+			}
 
-		var blob Blob
-		for i, cell := range extCells[:64] {
-			copy(blob[i*len(cell):], cell[:])
+			var blob Blob
+			for i, cell := range extCells[:64] {
+				copy(blob[i*len(cell):], cell[:])
+			}
+			blobs = append(blobs, blob)
 		}
-		blobs = append(blobs, blob)
 
 		offset = offset + len(cellIndices)
 	}
