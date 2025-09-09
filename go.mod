@@ -146,3 +146,5 @@ require (
 	golang.org/x/net v0.38.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
+
+replace github.com/crate-crypto/go-eth-kzg => github.com/healthykim/go-eth-kzg v0.0.0-20250909085852-cd8001ccdc13
