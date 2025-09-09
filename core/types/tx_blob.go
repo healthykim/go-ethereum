@@ -105,18 +105,17 @@ func NewBlobTxSidecar(version byte, blobs []kzg4844.Blob, commitments []kzg4844.
 	}
 }
 
-func (sc *BlobTxSidecar) BlobCount() int {
-	return len(sc.Cells) / sc.Custody.OneCount()
-}
-
 // BlobHashes computes the blob hashes of the given blobs.
-func (sc *BlobTxSidecar) BlobHashes() []common.Hash {
+func (sc *BlobTxSidecar) BlobHashes() ([]common.Hash, error) {
 	hasher := sha256.New()
 	h := make([]common.Hash, len(sc.Commitments))
+	if sc.Custody.OneCount() == 0 {
+		return nil, errors.New("custody bitmap is empty")
+	}
 	for i := range len(sc.Cells) / sc.Custody.OneCount() {
 		h[i] = kzg4844.CalcBlobHashV1(hasher, &sc.Commitments[i])
 	}
-	return h
+	return h, nil
 }
 
 // CellProofsAt returns the cell proofs for blob with index idx.
@@ -125,8 +124,14 @@ func (sc *BlobTxSidecar) CellProofsAt(idx int) ([]kzg4844.Proof, error) {
 	if sc.Version != BlobSidecarVersion1 {
 		return nil, fmt.Errorf("cell proof unsupported, version: %d", sc.Version)
 	}
+	if sc.Custody.OneCount() == 0 {
+		return nil, errors.New("custody bitmap is empty")
+	}
 	if idx < 0 || idx >= len(sc.Cells)/sc.Custody.OneCount() {
 		return nil, fmt.Errorf("cell proof out of bounds, index: %d, blobs: %d", idx, len(sc.Cells)/sc.Custody.OneCount())
+	}
+	if !sc.Custody.IsSet(uint(idx)) {
+		return nil, fmt.Errorf("cell proof is requested for the non-custody index %d", idx)
 	}
 	index := idx * kzg4844.CellProofsPerBlob
 	if len(sc.Proofs) < index+kzg4844.CellProofsPerBlob {

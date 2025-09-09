@@ -88,6 +88,7 @@ func createEmptyBlobTx(key *ecdsa.PrivateKey, withSidecar bool) *Transaction {
 
 func createEmptyBlobTxInner(withSidecar bool) *BlobTx {
 	sidecar := NewBlobTxSidecar(BlobSidecarVersion0, []kzg4844.Blob{*emptyBlob}, []kzg4844.Commitment{emptyBlobCommit}, []kzg4844.Proof{emptyBlobProof})
+	blobHashes, _ := sidecar.BlobHashes()
 	blobtx := &BlobTx{
 		ChainID:    uint256.NewInt(1),
 		Nonce:      5,
@@ -98,7 +99,7 @@ func createEmptyBlobTxInner(withSidecar bool) *BlobTx {
 		Value:      uint256.NewInt(99),
 		Data:       make([]byte, 50),
 		BlobFeeCap: uint256.NewInt(15),
-		BlobHashes: sidecar.BlobHashes(),
+		BlobHashes: blobHashes,
 	}
 	if withSidecar {
 		blobtx.Sidecar = sidecar

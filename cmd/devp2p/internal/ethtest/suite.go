@@ -892,6 +892,11 @@ func (s *Suite) makeBlobTxs(count, blobs int, discriminator byte) (txs types.Tra
 			blobdata[i] = discriminator
 			blobs -= 1
 		}
+		sidecar := makeSidecar(blobdata...)
+		blobHashes, err := sidecar.BlobHashes()
+		if err != nil {
+			panic("failed to get blobHashes")
+		}
 		inner := &types.BlobTx{
 			ChainID:    uint256.MustFromBig(s.chain.config.ChainID),
 			Nonce:      nonce + uint64(i),
@@ -899,8 +904,8 @@ func (s *Suite) makeBlobTxs(count, blobs int, discriminator byte) (txs types.Tra
 			GasFeeCap:  uint256.MustFromBig(s.chain.Head().BaseFee()),
 			Gas:        100000,
 			BlobFeeCap: uint256.MustFromBig(eip4844.CalcBlobFee(s.chain.config, s.chain.Head().Header())),
-			BlobHashes: makeSidecar(blobdata...).BlobHashes(),
-			Sidecar:    makeSidecar(blobdata...),
+			BlobHashes: blobHashes,
+			Sidecar:    sidecar,
 		}
 		tx, err := s.chain.SignTx(from, types.NewTx(inner))
 		if err != nil {

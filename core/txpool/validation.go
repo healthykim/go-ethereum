@@ -173,8 +173,8 @@ func validateBlobTx(tx *types.Transaction, head *types.Header, opts *ValidationO
 		return errors.New("blob transaction without any custody cells")
 	}
 	blobCount := len(sidecar.Cells) / sidecar.Custody.OneCount()
-	if blobCount != len(sidecar.Commitments) || blobCount != len(hashes) {
-		return fmt.Errorf("invalid number of %d blobs compared to %d commitments and %d blob hashes", blobCount, len(sidecar.Commitments), len(tx.BlobHashes()))
+	if blobCount != len(hashes) {
+		return fmt.Errorf("invalid number of %d blobs compared to %d blob hashes", blobCount, len(tx.BlobHashes()))
 	}
 	if err := sidecar.ValidateBlobCommitmentHashes(hashes); err != nil {
 		return err
