@@ -3,6 +3,8 @@ package types
 import (
 	"errors"
 	"math/bits"
+
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 )
 
 const CustodySize = 128
@@ -79,6 +81,13 @@ func (b CustodyBitmap) SetIndices(indices []uint64) error {
 
 func (b CustodyBitmap) SetAll() CustodyBitmap {
 	for i := 0; i < len(b); i++ {
+		b[i] = 0xFF
+	}
+	return b
+}
+
+func (b CustodyBitmap) SetData() CustodyBitmap {
+	for i := 0; i < kzg4844.DataPerBlob/8; i++ {
 		b[i] = 0xFF
 	}
 	return b

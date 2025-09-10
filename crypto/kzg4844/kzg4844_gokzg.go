@@ -160,7 +160,7 @@ func gokzgVerifyCells(cells []Cell, commitments []Commitment, cellProofs []Proof
 		kzgcells = make([]*gokzg4844.Cell, 0, len(cellProofs))
 	)
 	// Copy over the cell proofs and cells
-	for i := range cellProofs {
+	for i := range cells {
 		proofs[i] = gokzg4844.KZGProof(cellProofs[i])
 		gc := gokzg4844.Cell(cells[i])
 		kzgcells = append(kzgcells, &gc)

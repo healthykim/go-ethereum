@@ -105,6 +105,34 @@ func NewBlobTxSidecar(version byte, blobs []kzg4844.Blob, commitments []kzg4844.
 	}
 }
 
+func (sc *BlobTxSidecar) RemoveParity() error {
+	custodySize := sc.Custody.OneCount()
+	if custodySize == 0 {
+		return errors.New("blobless transaction")
+	}
+	blobCount := len(sc.Cells) / custodySize
+
+	var cellsWithoutParity []kzg4844.Cell
+	pos := 0
+	for range blobCount {
+		for bit := 0; bit < kzg4844.CellsPerBlob; bit++ {
+			if sc.Custody.IsSet(uint(bit)) {
+				cell := sc.Cells[pos]
+				pos++
+				if bit < kzg4844.DataPerBlob {
+					cellsWithoutParity = append(cellsWithoutParity, cell)
+				}
+			}
+		}
+	}
+	sc.Cells = cellsWithoutParity
+	for bit := 64; bit < kzg4844.CellsPerBlob; bit++ {
+		sc.Custody.Clear(uint(bit))
+	}
+
+	return nil
+}
+
 // BlobHashes computes the blob hashes of the given blobs.
 func (sc *BlobTxSidecar) BlobHashes() ([]common.Hash, error) {
 	hasher := sha256.New()

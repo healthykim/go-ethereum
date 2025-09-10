@@ -1520,8 +1520,12 @@ func (p *BlobPool) add(tx *types.Transaction) (err error) {
 			}
 		}()
 	}
+
 	// Transaction permitted into the pool from a nonce and cost perspective,
 	// insert it into the database and update the indices
+	if err := tx.BlobTxSidecar().RemoveParity(); err != nil {
+		return err
+	}
 	blob, err := rlp.EncodeToBytes(tx)
 	if err != nil {
 		log.Error("Failed to encode transaction for storage", "hash", tx.Hash(), "err", err)
