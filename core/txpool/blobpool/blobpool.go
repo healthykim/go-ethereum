@@ -121,7 +121,7 @@ func newBlobTxMeta(id uint64, size uint64, storageSize uint32, tx *types.Transac
 		vhashes:     tx.BlobHashes(),
 		id:          id,
 		storageSize: storageSize, // size of tx including cells
-		size:        size,        // size of tx only
+		size:        size,        // size of tx including blobs
 		nonce:       tx.Nonce(),
 		costCap:     uint256.MustFromBig(tx.Cost()),
 		execTipCap:  uint256.MustFromBig(tx.GasTipCap()),
@@ -139,12 +139,14 @@ func newBlobTxMeta(id uint64, size uint64, storageSize uint32, tx *types.Transac
 type PooledBlobTx struct {
 	Transaction *types.Transaction
 	Sidecar     *types.BlobTxCellSidecar
+	Size        uint64 // original transaction size
 }
 
-func NewPooledBlobTx(tx *types.Transaction, sidecar *types.BlobTxCellSidecar) *PooledBlobTx {
+func NewPooledBlobTx(tx *types.Transaction, sidecar *types.BlobTxCellSidecar, size uint64) *PooledBlobTx {
 	return &PooledBlobTx{
 		Transaction: tx,
 		Sidecar:     sidecar,
+		Size:        size,
 	}
 }
 
@@ -1077,7 +1079,7 @@ func (p *BlobPool) reinject(addr common.Address, txhash common.Hash) error {
 	}
 
 	// Update the indices and metrics
-	meta := newBlobTxMeta(id, tx.Transaction.Size(), p.store.Size(id), tx.Transaction)
+	meta := newBlobTxMeta(id, tx.Size, p.store.Size(id), tx.Transaction)
 	if _, ok := p.index[addr]; !ok {
 		if err := p.reserver.Hold(addr); err != nil {
 			log.Warn("Failed to reserve account for blob pool", "tx", tx.Transaction.Hash(), "from", addr, "err", err)
@@ -1387,7 +1389,7 @@ func (p *BlobPool) GetRLP(hash common.Hash) []byte {
 // given transaction hash.
 //
 // The size refers the length of the 'rlp encoding' of a blob transaction
-// excluding the attached blobs.
+// including the attached blobs.
 func (p *BlobPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
 	p.lock.RLock()
 	defer p.lock.RUnlock()
@@ -1541,7 +1543,7 @@ func (p *BlobPool) Add(txs []*types.Transaction, sync bool) []error {
 			errs[i] = err
 			continue
 		}
-		errs[i] = p.add(tx.WithoutBlobTxSidecar(), cellSidecar)
+		errs[i] = p.add(tx.WithoutBlobTxSidecar(), cellSidecar, tx.Size())
 		if errs[i] == nil {
 			adds = append(adds, tx.WithoutBlobTxSidecar())
 		}
@@ -1555,7 +1557,7 @@ func (p *BlobPool) Add(txs []*types.Transaction, sync bool) []error {
 
 // add inserts a new blob transaction into the pool if it passes validation (both
 // consensus validity and pool restrictions).
-func (p *BlobPool) add(tx *types.Transaction, cellSidecar *types.BlobTxCellSidecar) (err error) {
+func (p *BlobPool) add(tx *types.Transaction, cellSidecar *types.BlobTxCellSidecar, size uint64) (err error) {
 	// The blob pool blocks on adding a transaction. This is because blob txs are
 	// only even pulled from the network, so this method will act as the overload
 	// protection for fetches.
@@ -1614,7 +1616,7 @@ func (p *BlobPool) add(tx *types.Transaction, cellSidecar *types.BlobTxCellSidec
 
 	// Transaction permitted into the pool from a nonce and cost perspective,
 	// insert it into the database and update the indices
-	pooledTx := NewPooledBlobTx(tx, cellSidecar)
+	pooledTx := NewPooledBlobTx(tx, cellSidecar, size)
 	if pooledTx.RemoveParity() != nil {
 		return err
 	}
@@ -1628,7 +1630,7 @@ func (p *BlobPool) add(tx *types.Transaction, cellSidecar *types.BlobTxCellSidec
 	if err != nil {
 		return err
 	}
-	meta := newBlobTxMeta(id, tx.Size(), p.store.Size(id), tx)
+	meta := newBlobTxMeta(id, pooledTx.Size, p.store.Size(id), tx)
 
 	var (
 		next   = p.state.GetNonce(from)
