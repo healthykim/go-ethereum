@@ -37,6 +37,8 @@ var (
 	cellT       = reflect.TypeOf(Cell{})
 
 	CellProofsPerBlob = 128
+	CellsPerBlob      = 128
+	DataPerBlob       = 64
 )
 
 type Cell [2048]byte
