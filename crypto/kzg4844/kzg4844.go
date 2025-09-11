@@ -224,5 +224,4 @@ func RecoverBlobs(cells []Cell, cellIndices []uint64) ([]Blob, error) {
 		return ckzgRecoverBlobs(cells, cellIndices)
 	}
 	return gokzgRecoverBlobs(cells, cellIndices)
-
 }
