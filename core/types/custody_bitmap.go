@@ -18,6 +18,7 @@ func NewCustodyBitmap(custody []uint64) CustodyBitmap {
 	}
 	return result
 }
+
 func (b CustodyBitmap) IsSet(i uint) bool {
 	if i >= uint(kzg4844.CellsPerBlob) {
 		return false

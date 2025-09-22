@@ -437,7 +437,7 @@ func handleNewPooledTransactionHashes(backend Backend, msg Decoder, peer *Peer) 
 	if !backend.AcceptTxs() {
 		return nil
 	}
-	ann := new(NewPooledTransactionHashesPacket)
+	ann := new(NewPooledTransactionHashesPacket70)
 	if err := msg.Decode(ann); err != nil {
 		return err
 	}
