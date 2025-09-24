@@ -1628,7 +1628,6 @@ func (p *BlobPool) Add(txs []*types.Transaction, sync bool) []error {
 		if errs[i] == nil {
 			adds = append(adds, tx.WithoutBlobTxSidecar())
 		}
-
 	}
 	if len(adds) > 0 {
 		p.discoverFeed.Send(core.NewTxsEvent{Txs: adds})
@@ -1724,7 +1723,6 @@ func (p *BlobPool) addBuffer(tx *types.Transaction) (err error) {
 		}
 
 		p.replacementQueue[from][nonce] = meta
-
 	} else {
 		if p.indexQueue[from] == nil {
 			p.indexQueue[from] = []*blobTxMeta{}
