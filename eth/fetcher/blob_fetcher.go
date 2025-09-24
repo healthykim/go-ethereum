@@ -1,6 +1,7 @@
 package fetcher
 
 import (
+	"math/rand"
 	"slices"
 	"sort"
 	"time"
@@ -49,7 +50,7 @@ type cellRequest struct {
 type payloadDelivery struct {
 	origin     string        // Peer from which the payloads were delivered
 	txs        []common.Hash // Hashes of transactions that were delivered
-	cells      [][]*kzg4844.Cell
+	cells      [][]kzg4844.Cell
 	cellBitmap *types.CustodyBitmap
 }
 
@@ -61,7 +62,7 @@ type cellWithSeq struct {
 type fetchStatus struct {
 	fetching *types.CustodyBitmap // To avoid fetching cells which had already been fetched / currently being fetched
 	fetched  []uint64             // To sort cells
-	cells    []*kzg4844.Cell
+	cells    []kzg4844.Cell
 }
 
 // BlobFetcher is responsible for managing type 3 transactions based on peer announcements.
@@ -104,9 +105,8 @@ type BlobFetcher struct {
 	alternates map[common.Hash]map[string]*types.CustodyBitmap // In-flight transaction alternate origins (in case the peer is dropped)
 
 	// Callbacks
-	hasTx         func(common.Hash) bool // Whether the transaction has already been added to the blobpool
-	validateCells func([]common.Hash, [][]*kzg4844.Cell, *types.CustodyBitmap) []error
-	addPayload    func([]common.Hash, [][]*kzg4844.Cell, *types.CustodyBitmap)
+	validateCells func([]common.Hash, [][]kzg4844.Cell, *types.CustodyBitmap) []error
+	addPayload    func([]common.Hash, [][]kzg4844.Cell, *types.CustodyBitmap) []error
 	fetchPayloads func(string, []common.Hash, *types.CustodyBitmap) error
 	dropPeer      func(string)
 
@@ -117,10 +117,10 @@ type BlobFetcher struct {
 }
 
 func NewBlobFetcher(
-	hasTx func(common.Hash) bool,
-	validateCells func([]common.Hash, [][]*kzg4844.Cell, *types.CustodyBitmap) []error,
-	addPayload func([]common.Hash, [][]*kzg4844.Cell, *types.CustodyBitmap),
-	fetchPayloads func(string, []common.Hash, *types.CustodyBitmap) error, dropPeer func(string),
+	validateCells func([]common.Hash, [][]kzg4844.Cell, *types.CustodyBitmap) []error, //
+	addPayload func([]common.Hash, [][]kzg4844.Cell, *types.CustodyBitmap) []error, //
+	fetchPayloads func(string, []common.Hash, *types.CustodyBitmap) error,
+	dropPeer func(string),
 	custody *types.CustodyBitmap, rand random) *BlobFetcher {
 	return &BlobFetcher{
 		notify:        make(chan *blobTxAnnounce),
@@ -136,7 +136,6 @@ func NewBlobFetcher(
 		fetches:       make(map[common.Hash]*fetchStatus),
 		requests:      make(map[string][]*cellRequest),
 		alternates:    make(map[common.Hash]map[string]*types.CustodyBitmap),
-		hasTx:         hasTx,
 		validateCells: validateCells,
 		addPayload:    addPayload,
 		fetchPayloads: fetchPayloads,
@@ -149,23 +148,7 @@ func NewBlobFetcher(
 }
 
 // Notify is called when a Type 3 transaction is observed on the network. (TransactionPacket / NewPooledTransactionHashesPacket)
-func (f *BlobFetcher) Notify(peer string, hashes []common.Hash, cells types.CustodyBitmap) error {
-	// Cheap, discarded and duplication check are not required here,
-	// as these are handled by tx_fetcher.
-	txs := make([]common.Hash, 0, len(hashes))
-	for _, hash := range hashes {
-		if f.hasTx(hash) {
-			// Skip those already processed
-			continue
-		}
-		txs = append(txs, hash)
-	}
-	// todo(check overlapping custody)
-
-	// If anything's left to announce, push it into the internal loop
-	if len(txs) == 0 {
-		return nil
-	}
+func (f *BlobFetcher) Notify(peer string, txs []common.Hash, cells types.CustodyBitmap) error {
 	blobAnnounce := &blobTxAnnounce{origin: peer, txs: txs, cells: cells}
 	select {
 	case f.notify <- blobAnnounce:
@@ -177,10 +160,10 @@ func (f *BlobFetcher) Notify(peer string, hashes []common.Hash, cells types.Cust
 
 // Enqueue inserts a batch of received blob payloads into the blob pool.
 // This is triggered by ethHandler upon receiving direct request responses.
-func (f *BlobFetcher) Enqueue(peer string, hashes []common.Hash, cells [][]*kzg4844.Cell, cellBitmap types.CustodyBitmap) error {
+func (f *BlobFetcher) Enqueue(peer string, hashes []common.Hash, cells [][]kzg4844.Cell, cellBitmap types.CustodyBitmap) error {
 	var (
 		validatedTxs   = make([]common.Hash, 0)
-		validatedCells = make([][]*kzg4844.Cell, 0)
+		validatedCells = make([][]kzg4844.Cell, 0)
 	)
 
 	for i := 0; i < len(hashes); i += addTxsBatchSize {
@@ -210,6 +193,10 @@ func (f *BlobFetcher) Enqueue(peer string, hashes []common.Hash, cells [][]*kzg4
 	}
 
 	return nil
+}
+
+func (f *BlobFetcher) UpdateCustody(cells *types.CustodyBitmap) {
+	f.custody = cells
 }
 
 func (f *BlobFetcher) Drop(peer string) error {
@@ -276,7 +263,13 @@ func (f *BlobFetcher) loop() {
 				if _, ok := f.full[hash]; !ok {
 					if _, ok := f.partial[hash]; !ok {
 						// Not decided yet
-						if f.rand.Intn(100) < 15 {
+						var randomValue int
+						if f.rand == nil {
+							randomValue = rand.Intn(100)
+						} else {
+							randomValue = f.rand.Intn(100)
+						}
+						if randomValue < 15 {
 							f.full[hash] = struct{}{}
 						} else {
 							f.partial[hash] = struct{}{}
@@ -295,7 +288,7 @@ func (f *BlobFetcher) loop() {
 						f.announces[ann.origin] = make(map[common.Hash]*cellWithSeq)
 					}
 					f.announces[ann.origin][hash] = &cellWithSeq{
-						cells: &ann.cells,
+						cells: types.CustodyBitmapData,
 						seq:   nextSeq(),
 					}
 					reschedule[ann.origin] = struct{}{}
@@ -429,7 +422,7 @@ func (f *BlobFetcher) loop() {
 		case delivery := <-f.cleanup:
 			// Remove from announce
 			addedHashes := make([]common.Hash, 0)
-			addedCells := make([][]*kzg4844.Cell, 0)
+			addedCells := make([][]kzg4844.Cell, 0)
 
 			var requestId int
 			request := new(cellRequest)
@@ -504,6 +497,7 @@ func (f *BlobFetcher) loop() {
 				}
 			}
 			// Update mempool status for arrived hashes
+			// Record errors if needed
 			f.addPayload(addedHashes, addedCells, delivery.cellBitmap)
 
 			// Remove the request
@@ -688,7 +682,7 @@ func (f *BlobFetcher) scheduleFetches(timer *mclock.Timer, timeout chan struct{}
 					f.fetches[hash] = &fetchStatus{
 						fetching: difference,
 						fetched:  make([]uint64, 0),
-						cells:    make([]*kzg4844.Cell, 0),
+						cells:    make([]kzg4844.Cell, 0),
 					}
 				} else {
 					f.fetches[hash].fetching = f.fetches[hash].fetching.Union(difference)
@@ -785,14 +779,12 @@ func (f *BlobFetcher) forEachPeer(peers map[string]struct{}, do func(peer string
 		}
 		return
 	}
-	// We're running the test suite, make iteration deterministic (sorted by peer id)
+	// We're running the test suite, make iteration sorted by peer id
 	list := make([]string, 0, len(peers))
 	for peer := range peers {
 		list = append(list, peer)
 	}
 	sort.Strings(list)
-	// use the same method declared in tx fetcher
-	rotateStrings(list, f.rand.Intn(len(list)))
 	for _, peer := range list {
 		do(peer)
 	}

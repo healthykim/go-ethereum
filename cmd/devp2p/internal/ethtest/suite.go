@@ -938,7 +938,7 @@ func (s *Suite) TestBlobViolations(t *utesting.T) {
 		// Wrong tx type.
 		{
 			ann: eth.NewPooledTransactionHashesPacket70{
-				Types:  []byte{types.DynamicFeeTxType, types.BlobTxType},
+				Types:  []byte{types.BlobTxType, types.DynamicFeeTxType},
 				Sizes:  []uint32{uint32(t2[0].Size()), uint32(t2[1].Size())},
 				Hashes: []common.Hash{t2[0].Hash(), t2[1].Hash()},
 			},

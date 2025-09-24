@@ -10,6 +10,24 @@ import (
 // `CustodyBitmap` is a bitmap to represent which custody index to store (little endian)
 type CustodyBitmap [16]byte
 
+var (
+	CustodyBitmapAll = func() *CustodyBitmap {
+		var result CustodyBitmap
+		for i := 0; i < len(result); i++ {
+			result[i] = 0xFF
+		}
+		return &result
+	}()
+
+	CustodyBitmapData = func() *CustodyBitmap {
+		var result CustodyBitmap
+		for i := 0; i < kzg4844.DataPerBlob/8; i++ {
+			result[i] = 0xFF
+		}
+		return &result
+	}()
+)
+
 func NewCustodyBitmap(custody []uint64) CustodyBitmap {
 	result := CustodyBitmap{}
 	err := (&result).SetIndices(custody)
@@ -84,20 +102,6 @@ func (b *CustodyBitmap) SetIndices(indices []uint64) error {
 		b[byteIdx] |= 1 << bitOff
 	}
 	return nil
-}
-
-func (b CustodyBitmap) SetAll() CustodyBitmap {
-	for i := 0; i < len(b); i++ {
-		b[i] = 0xFF
-	}
-	return b
-}
-
-func (b CustodyBitmap) SetData() CustodyBitmap {
-	for i := 0; i < kzg4844.DataPerBlob/8; i++ {
-		b[i] = 0xFF
-	}
-	return b
 }
 
 func (b CustodyBitmap) Same(set *CustodyBitmap) bool {

@@ -351,6 +351,12 @@ func (p *Peer) RequestTxs(hashes []common.Hash) error {
 	})
 }
 
+// RequestTxs fetches a batch of transactions from a remote node.
+func (p *Peer) RequestPayload(hashes []common.Hash, cell *types.CustodyBitmap) error {
+	//todo
+	panic("unimplemented")
+}
+
 // SendBlockRangeUpdate sends a notification about our available block range to the peer.
 func (p *Peer) SendBlockRangeUpdate(msg BlockRangeUpdatePacket) error {
 	if p.version < ETH69 {

@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -54,7 +55,8 @@ var (
 // Its goal is to get around setting up a valid statedb for the balance and nonce
 // checks.
 type testTxPool struct {
-	pool map[common.Hash]*types.Transaction // Hash map of collected transactions
+	txPool   map[common.Hash]*types.Transaction // Hash map of collected transactions
+	cellPool map[common.Hash][]kzg4844.Cell
 
 	txFeed event.Feed   // Notification feed to allow waiting for inclusion
 	lock   sync.RWMutex // Protects the transaction pool
@@ -63,7 +65,7 @@ type testTxPool struct {
 // newTestTxPool creates a mock transaction pool.
 func newTestTxPool() *testTxPool {
 	return &testTxPool{
-		pool: make(map[common.Hash]*types.Transaction),
+		txPool: make(map[common.Hash]*types.Transaction),
 	}
 }
 
@@ -73,7 +75,7 @@ func (p *testTxPool) Has(hash common.Hash) bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	return p.pool[hash] != nil
+	return p.txPool[hash] != nil
 }
 
 // Get retrieves the transaction from local txpool with given
@@ -81,7 +83,7 @@ func (p *testTxPool) Has(hash common.Hash) bool {
 func (p *testTxPool) Get(hash common.Hash) *types.Transaction {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	return p.pool[hash]
+	return p.txPool[hash]
 }
 
 // Get retrieves the transaction from local txpool with given
@@ -90,7 +92,7 @@ func (p *testTxPool) GetRLP(hash common.Hash) []byte {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	tx := p.pool[hash]
+	tx := p.txPool[hash]
 	if tx != nil {
 		blob, _ := rlp.EncodeToBytes(tx)
 		return blob
@@ -104,7 +106,7 @@ func (p *testTxPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	tx := p.pool[hash]
+	tx := p.txPool[hash]
 	if tx != nil {
 		return &txpool.TxMetadata{
 			Type: tx.Type(),
@@ -121,7 +123,7 @@ func (p *testTxPool) Add(txs []*types.Transaction, sync bool) []error {
 	defer p.lock.Unlock()
 
 	for _, tx := range txs {
-		p.pool[tx.Hash()] = tx
+		p.txPool[tx.Hash()] = tx
 	}
 	p.txFeed.Send(core.NewTxsEvent{Txs: txs})
 	return make([]error, len(txs))
@@ -133,7 +135,7 @@ func (p *testTxPool) Pending(filter txpool.PendingFilter) map[common.Address][]*
 	defer p.lock.RUnlock()
 
 	batches := make(map[common.Address][]*types.Transaction)
-	for _, tx := range p.pool {
+	for _, tx := range p.txPool {
 		from, _ := types.Sender(types.HomesteadSigner{}, tx)
 		batches[from] = append(batches[from], tx)
 	}
@@ -161,6 +163,27 @@ func (p *testTxPool) Pending(filter txpool.PendingFilter) map[common.Address][]*
 // send events to the given channel.
 func (p *testTxPool) SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) event.Subscription {
 	return p.txFeed.Subscribe(ch)
+}
+
+func (p *testTxPool) AddPayload(txs []common.Hash, cells [][]kzg4844.Cell, custody *types.CustodyBitmap) []error {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	for i, tx := range txs {
+		p.cellPool[tx] = cells[i]
+	}
+	return nil
+}
+
+func (p *testTxPool) ValidateCells(txs []common.Hash, cells [][]kzg4844.Cell, custody *types.CustodyBitmap) []error {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	errors := make([]error, len(txs))
+	for i, tx := range txs {
+		errors[i] = kzg4844.VerifyCells(cells[i], p.txPool[tx].BlobTxSidecar().Commitments, p.txPool[tx].BlobTxSidecar().Proofs, custody.Indices())
+	}
+	return errors
 }
 
 // testHandler is a live implementation of the Ethereum protocol handler, just
@@ -199,6 +222,7 @@ func newTestHandlerWithBlocks(blocks int) *testHandler {
 		Database:   db,
 		Chain:      chain,
 		TxPool:     txpool,
+		BlobPool:   txpool,
 		Network:    1,
 		Sync:       ethconfig.SnapSync,
 		BloomCache: 1,

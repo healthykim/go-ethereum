@@ -33,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/fetcher"
@@ -94,6 +95,11 @@ type txPool interface {
 	SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) event.Subscription
 }
 
+type blobPool interface {
+	ValidateCells([]common.Hash, [][]kzg4844.Cell, *types.CustodyBitmap) []error
+	AddPayload([]common.Hash, [][]kzg4844.Cell, *types.CustodyBitmap) []error
+}
+
 // handlerConfig is the collection of initialization parameters to create a full
 // node network handler.
 type handlerConfig struct {
@@ -101,11 +107,13 @@ type handlerConfig struct {
 	Database       ethdb.Database         // Database for direct sync insertions
 	Chain          *core.BlockChain       // Blockchain to serve data from
 	TxPool         txPool                 // Transaction pool to propagate from
+	BlobPool       blobPool               // BlobPool to add cells
 	Network        uint64                 // Network identifier to advertise
 	Sync           ethconfig.SyncMode     // Whether to snap or full sync
 	BloomCache     uint64                 // Megabytes to alloc for snap sync bloom
 	EventMux       *event.TypeMux         // Legacy event mux, deprecate for `feed`
 	RequiredBlocks map[uint64]common.Hash // Hard coded map of required block hashes for sync challenges
+	Custody        types.CustodyBitmap
 }
 
 type handler struct {
@@ -117,11 +125,13 @@ type handler struct {
 
 	database ethdb.Database
 	txpool   txPool
+	blobpool blobPool
 	chain    *core.BlockChain
 	maxPeers int
 
 	downloader     *downloader.Downloader
 	txFetcher      *fetcher.TxFetcher
+	blobFetcher    *fetcher.BlobFetcher
 	peers          *peerSet
 	txBroadcastKey [16]byte
 
@@ -153,6 +163,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		eventMux:       config.EventMux,
 		database:       config.Database,
 		txpool:         config.TxPool,
+		blobpool:       config.BlobPool,
 		chain:          config.Chain,
 		peers:          newPeerSet(),
 		txBroadcastKey: newBroadcastChoiceKey(),
@@ -207,6 +218,15 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		return h.txpool.Add(txs, false)
 	}
 	h.txFetcher = fetcher.NewTxFetcher(h.txpool.Has, addTxs, fetchTx, h.removePeer)
+
+	fetchPayloads := func(peer string, hashes []common.Hash, cells *types.CustodyBitmap) error {
+		p := h.peers.peer(peer)
+		if p == nil {
+			return errors.New("unknown peer")
+		}
+		return p.RequestPayload(hashes, cells)
+	}
+	h.blobFetcher = fetcher.NewBlobFetcher(h.blobpool.ValidateCells, h.blobpool.AddPayload, fetchPayloads, h.removePeer, &config.Custody, nil)
 	return h, nil
 }
 

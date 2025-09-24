@@ -37,12 +37,12 @@ func makeTestCellSidecar(blobCount int) *types.BlobTxCellSidecar {
 	return sidecar
 }
 
-func selectCells(cells []kzg4844.Cell, custody *types.CustodyBitmap) []*kzg4844.Cell {
+func selectCells(cells []kzg4844.Cell, custody *types.CustodyBitmap) []kzg4844.Cell {
 	custodyIndices := custody.Indices()
-	result := make([]*kzg4844.Cell, 0)
+	result := make([]kzg4844.Cell, 0)
 
 	for _, idx := range custodyIndices {
-		result = append(result, &cells[idx])
+		result = append(result, cells[idx])
 	}
 
 	return result
@@ -67,7 +67,8 @@ var (
 
 	custody = types.NewCustodyBitmap([]uint64{0, 1, 2, 3, 4, 5, 6, 7})
 
-	fullCustody      = types.CustodyBitmap{}.SetAll()
+	fullCustody      = *types.CustodyBitmapAll
+	halfCustody      = *types.CustodyBitmapData
 	frontCustody     = types.NewCustodyBitmap([]uint64{0, 1, 2, 3, 8, 9, 10, 11})
 	backCustody      = types.NewCustodyBitmap([]uint64{4, 5, 6, 7, 8, 9, 10, 11})
 	differentCustody = types.NewCustodyBitmap([]uint64{8, 9, 10, 11, 12, 13, 14, 15})
@@ -82,7 +83,7 @@ type doBlobNotify struct {
 type doBlobEnqueue struct {
 	peer    string
 	hashes  []common.Hash
-	cells   [][]*kzg4844.Cell
+	cells   [][]kzg4844.Cell
 	custody types.CustodyBitmap
 }
 
@@ -136,11 +137,12 @@ func TestBlobFetcherFullFetch(t *testing.T) {
 	testBlobFetcher(t, blobFetcherTest{
 		init: func() *BlobFetcher {
 			return NewBlobFetcher(
-				func(common.Hash) bool { return false },
-				func(txs []common.Hash, _ [][]*kzg4844.Cell, _ *types.CustodyBitmap) []error {
+				func(txs []common.Hash, _ [][]kzg4844.Cell, _ *types.CustodyBitmap) []error {
 					return make([]error, len(txs))
 				},
-				func([]common.Hash, [][]*kzg4844.Cell, *types.CustodyBitmap) {},
+				func(txs []common.Hash, _ [][]kzg4844.Cell, _ *types.CustodyBitmap) []error {
+					return make([]error, len(txs))
+				},
 				func(string, []common.Hash, *types.CustodyBitmap) error { return nil },
 				func(string) {},
 				&custody,
@@ -153,16 +155,16 @@ func TestBlobFetcherFullFetch(t *testing.T) {
 			isDecidedFull{testBlobTxHashes[0]: struct{}{}},
 			isBlobScheduled{
 				announces: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 				fetching: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 			},
 			isFetching{
 				hashes: map[common.Hash]fetchInfo{
 					testBlobTxHashes[0]: {
-						fetching: &fullCustody,
+						fetching: &halfCustody,
 						fetched:  []uint64{},
 					},
 				},
@@ -172,11 +174,11 @@ func TestBlobFetcherFullFetch(t *testing.T) {
 			doBlobNotify{peer: "B", hashes: []common.Hash{testBlobTxHashes[0]}, custody: fullCustody},
 			isBlobScheduled{
 				announces: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}},
-					"B": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}},
+					"B": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 				fetching: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 			},
 
@@ -184,11 +186,11 @@ func TestBlobFetcherFullFetch(t *testing.T) {
 			doBlobNotify{peer: "C", hashes: []common.Hash{testBlobTxHashes[1]}, custody: custody},
 			isBlobScheduled{
 				announces: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}},
-					"B": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}},
+					"B": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 				fetching: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 			},
 
@@ -196,11 +198,11 @@ func TestBlobFetcherFullFetch(t *testing.T) {
 			doBlobNotify{peer: "A", hashes: []common.Hash{testBlobTxHashes[1]}, custody: fullCustody},
 			isBlobScheduled{
 				announces: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}, {hash: testBlobTxHashes[1], custody: fullCustody}},
-					"B": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}, {hash: testBlobTxHashes[1], custody: halfCustody}},
+					"B": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 				fetching: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 			},
 
@@ -208,13 +210,13 @@ func TestBlobFetcherFullFetch(t *testing.T) {
 			doBlobNotify{peer: "D", hashes: []common.Hash{testBlobTxHashes[2], testBlobTxHashes[3]}, custody: fullCustody},
 			isBlobScheduled{
 				announces: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}, {hash: testBlobTxHashes[1], custody: fullCustody}},
-					"B": {{hash: testBlobTxHashes[0], custody: fullCustody}},
-					"D": {{hash: testBlobTxHashes[2], custody: fullCustody}, {hash: testBlobTxHashes[3], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}, {hash: testBlobTxHashes[1], custody: halfCustody}},
+					"B": {{hash: testBlobTxHashes[0], custody: halfCustody}},
+					"D": {{hash: testBlobTxHashes[2], custody: halfCustody}, {hash: testBlobTxHashes[3], custody: halfCustody}},
 				},
 				fetching: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}},
-					"D": {{hash: testBlobTxHashes[2], custody: fullCustody}, {hash: testBlobTxHashes[3], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}},
+					"D": {{hash: testBlobTxHashes[2], custody: halfCustody}, {hash: testBlobTxHashes[3], custody: halfCustody}},
 				},
 			},
 		},
@@ -226,11 +228,12 @@ func TestBlobFetcherPartialFetch(t *testing.T) {
 	testBlobFetcher(t, blobFetcherTest{
 		init: func() *BlobFetcher {
 			return NewBlobFetcher(
-				func(common.Hash) bool { return false },
-				func(txs []common.Hash, _ [][]*kzg4844.Cell, _ *types.CustodyBitmap) []error {
+				func(txs []common.Hash, _ [][]kzg4844.Cell, _ *types.CustodyBitmap) []error {
 					return make([]error, len(txs))
 				},
-				func([]common.Hash, [][]*kzg4844.Cell, *types.CustodyBitmap) {},
+				func(txs []common.Hash, _ [][]kzg4844.Cell, _ *types.CustodyBitmap) []error {
+					return make([]error, len(txs))
+				},
 				func(string, []common.Hash, *types.CustodyBitmap) error { return nil },
 				func(string) {},
 				&custody,
@@ -320,11 +323,12 @@ func TestBlobFetcherFullDelivery(t *testing.T) {
 	testBlobFetcher(t, blobFetcherTest{
 		init: func() *BlobFetcher {
 			return NewBlobFetcher(
-				func(common.Hash) bool { return false },
-				func(txs []common.Hash, _ [][]*kzg4844.Cell, _ *types.CustodyBitmap) []error {
+				func(txs []common.Hash, _ [][]kzg4844.Cell, _ *types.CustodyBitmap) []error {
 					return make([]error, len(txs))
 				},
-				func([]common.Hash, [][]*kzg4844.Cell, *types.CustodyBitmap) {},
+				func(txs []common.Hash, _ [][]kzg4844.Cell, _ *types.CustodyBitmap) []error {
+					return make([]error, len(txs))
+				},
 				func(string, []common.Hash, *types.CustodyBitmap) error { return nil },
 				func(string) {},
 				&custody,
@@ -337,24 +341,24 @@ func TestBlobFetcherFullDelivery(t *testing.T) {
 			doBlobNotify{peer: "B", hashes: []common.Hash{testBlobTxHashes[0]}, custody: fullCustody},
 			isBlobScheduled{
 				announces: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}},
-					"B": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}},
+					"B": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 				fetching: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 			},
 			isFetching{
 				hashes: map[common.Hash]fetchInfo{
 					testBlobTxHashes[0]: {
-						fetching: &fullCustody,
+						fetching: &halfCustody,
 						fetched:  []uint64{},
 					},
 				},
 			},
 
 			// All alternates should be clean up on delivery
-			doBlobEnqueue{peer: "A", hashes: []common.Hash{testBlobTxHashes[0]}, cells: [][]*kzg4844.Cell{selectCells(testBlobSidecars[0].Cells, &fullCustody)}, custody: fullCustody},
+			doBlobEnqueue{peer: "A", hashes: []common.Hash{testBlobTxHashes[0]}, cells: [][]kzg4844.Cell{selectCells(testBlobSidecars[0].Cells, &halfCustody)}, custody: halfCustody},
 			isBlobScheduled{announces: nil, fetching: nil},
 			isFetching{hashes: nil}, // fetches should be empty after completion
 			isCompleted{testBlobTxHashes[0]},
@@ -367,11 +371,12 @@ func TestBlobFetcherPartialDelivery(t *testing.T) {
 	testBlobFetcher(t, blobFetcherTest{
 		init: func() *BlobFetcher {
 			return NewBlobFetcher(
-				func(common.Hash) bool { return false },
-				func(txs []common.Hash, _ [][]*kzg4844.Cell, _ *types.CustodyBitmap) []error {
+				func(txs []common.Hash, _ [][]kzg4844.Cell, _ *types.CustodyBitmap) []error {
 					return make([]error, len(txs))
 				},
-				func([]common.Hash, [][]*kzg4844.Cell, *types.CustodyBitmap) {},
+				func(txs []common.Hash, _ [][]kzg4844.Cell, _ *types.CustodyBitmap) []error {
+					return make([]error, len(txs))
+				},
 				func(string, []common.Hash, *types.CustodyBitmap) error { return nil },
 				func(string) {},
 				&custody,
@@ -434,7 +439,7 @@ func TestBlobFetcherPartialDelivery(t *testing.T) {
 			doBlobEnqueue{
 				peer:    "C",
 				hashes:  []common.Hash{testBlobTxHashes[0]},
-				cells:   [][]*kzg4844.Cell{selectCells(testBlobSidecars[0].Cells, frontCustody.Intersection(&custody))},
+				cells:   [][]kzg4844.Cell{selectCells(testBlobSidecars[0].Cells, frontCustody.Intersection(&custody))},
 				custody: *frontCustody.Intersection(&custody),
 			},
 			isBlobScheduled{
@@ -489,7 +494,7 @@ func TestBlobFetcherPartialDelivery(t *testing.T) {
 			doBlobEnqueue{
 				peer:    "E",
 				hashes:  []common.Hash{testBlobTxHashes[0]},
-				cells:   [][]*kzg4844.Cell{selectCells(testBlobSidecars[0].Cells, backCustody.Intersection(&custody))},
+				cells:   [][]kzg4844.Cell{selectCells(testBlobSidecars[0].Cells, backCustody.Intersection(&custody))},
 				custody: *backCustody.Intersection(&custody),
 			},
 			isCompleted{testBlobTxHashes[0]},
@@ -502,11 +507,12 @@ func TestBlobFetcherAvailabilityTimeout(t *testing.T) {
 	testBlobFetcher(t, blobFetcherTest{
 		init: func() *BlobFetcher {
 			return NewBlobFetcher(
-				func(common.Hash) bool { return false },
-				func(txs []common.Hash, _ [][]*kzg4844.Cell, _ *types.CustodyBitmap) []error {
+				func(txs []common.Hash, _ [][]kzg4844.Cell, _ *types.CustodyBitmap) []error {
 					return make([]error, len(txs))
 				},
-				func([]common.Hash, [][]*kzg4844.Cell, *types.CustodyBitmap) {},
+				func(txs []common.Hash, _ [][]kzg4844.Cell, _ *types.CustodyBitmap) []error {
+					return make([]error, len(txs))
+				},
 				func(string, []common.Hash, *types.CustodyBitmap) error { return nil },
 				func(string) {},
 				&custody,
@@ -535,11 +541,12 @@ func TestBlobFetcherPeerDrop(t *testing.T) {
 	testBlobFetcher(t, blobFetcherTest{
 		init: func() *BlobFetcher {
 			return NewBlobFetcher(
-				func(common.Hash) bool { return false },
-				func(txs []common.Hash, _ [][]*kzg4844.Cell, _ *types.CustodyBitmap) []error {
+				func(txs []common.Hash, _ [][]kzg4844.Cell, _ *types.CustodyBitmap) []error {
 					return make([]error, len(txs))
 				},
-				func([]common.Hash, [][]*kzg4844.Cell, *types.CustodyBitmap) {},
+				func(txs []common.Hash, _ [][]kzg4844.Cell, _ *types.CustodyBitmap) []error {
+					return make([]error, len(txs))
+				},
 				func(string, []common.Hash, *types.CustodyBitmap) error { return nil },
 				func(string) {},
 				&custody,
@@ -552,16 +559,16 @@ func TestBlobFetcherPeerDrop(t *testing.T) {
 			isDecidedFull{testBlobTxHashes[0]: struct{}{}},
 			isBlobScheduled{
 				announces: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 				fetching: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 			},
 			isFetching{
 				hashes: map[common.Hash]fetchInfo{
 					testBlobTxHashes[0]: {
-						fetching: &fullCustody,
+						fetching: &halfCustody,
 						fetched:  []uint64{},
 					},
 				},
@@ -571,11 +578,11 @@ func TestBlobFetcherPeerDrop(t *testing.T) {
 			doBlobNotify{peer: "B", hashes: []common.Hash{testBlobTxHashes[0]}, custody: fullCustody},
 			isBlobScheduled{
 				announces: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}},
-					"B": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}},
+					"B": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 				fetching: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 			},
 
@@ -583,16 +590,16 @@ func TestBlobFetcherPeerDrop(t *testing.T) {
 			doDrop("A"),
 			isBlobScheduled{
 				announces: map[string][]blobAnnounce{
-					"B": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"B": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 				fetching: map[string][]blobAnnounce{
-					"B": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"B": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 			},
 			isFetching{
 				hashes: map[common.Hash]fetchInfo{
 					testBlobTxHashes[0]: {
-						fetching: &fullCustody,
+						fetching: &halfCustody,
 						fetched:  []uint64{},
 					},
 				},
@@ -611,11 +618,12 @@ func TestBlobFetcherFetchTimeout(t *testing.T) {
 	testBlobFetcher(t, blobFetcherTest{
 		init: func() *BlobFetcher {
 			return NewBlobFetcher(
-				func(common.Hash) bool { return false },
-				func(txs []common.Hash, _ [][]*kzg4844.Cell, _ *types.CustodyBitmap) []error {
+				func(txs []common.Hash, _ [][]kzg4844.Cell, _ *types.CustodyBitmap) []error {
 					return make([]error, len(txs))
 				},
-				func([]common.Hash, [][]*kzg4844.Cell, *types.CustodyBitmap) {},
+				func(txs []common.Hash, _ [][]kzg4844.Cell, _ *types.CustodyBitmap) []error {
+					return make([]error, len(txs))
+				},
 				func(string, []common.Hash, *types.CustodyBitmap) error { return nil },
 				func(string) {},
 				&custody,
@@ -628,16 +636,16 @@ func TestBlobFetcherFetchTimeout(t *testing.T) {
 			isDecidedFull{testBlobTxHashes[0]: struct{}{}},
 			isBlobScheduled{
 				announces: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 				fetching: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 			},
 			isFetching{
 				hashes: map[common.Hash]fetchInfo{
 					testBlobTxHashes[0]: {
-						fetching: &fullCustody,
+						fetching: &halfCustody,
 						fetched:  []uint64{},
 					},
 				},
@@ -647,11 +655,11 @@ func TestBlobFetcherFetchTimeout(t *testing.T) {
 			doBlobNotify{peer: "B", hashes: []common.Hash{testBlobTxHashes[0]}, custody: fullCustody},
 			isBlobScheduled{
 				announces: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}},
-					"B": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}},
+					"B": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 				fetching: map[string][]blobAnnounce{
-					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"A": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 			},
 
@@ -659,16 +667,16 @@ func TestBlobFetcherFetchTimeout(t *testing.T) {
 			doWait{time: testBlobFetchTimeout, step: true},
 			isBlobScheduled{
 				announces: map[string][]blobAnnounce{
-					"B": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"B": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 				fetching: map[string][]blobAnnounce{
-					"B": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"B": {{hash: testBlobTxHashes[0], custody: halfCustody}},
 				},
 			},
 			isFetching{
 				hashes: map[common.Hash]fetchInfo{
 					testBlobTxHashes[0]: {
-						fetching: &fullCustody,
+						fetching: &halfCustody,
 						fetched:  []uint64{},
 					},
 				},

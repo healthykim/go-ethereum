@@ -139,14 +139,12 @@ func newBlobTxMeta(id uint64, size uint64, storageSize uint32, tx *types.Transac
 type PooledBlobTx struct {
 	Transaction *types.Transaction
 	Sidecar     *types.BlobTxCellSidecar
-	Size        uint64 // original transaction size
 }
 
-func NewPooledBlobTx(tx *types.Transaction, sidecar *types.BlobTxCellSidecar, size uint64) *PooledBlobTx {
+func NewPooledBlobTx(tx *types.Transaction, sidecar *types.BlobTxCellSidecar) *PooledBlobTx {
 	return &PooledBlobTx{
 		Transaction: tx,
 		Sidecar:     sidecar,
-		Size:        size,
 	}
 }
 
@@ -377,6 +375,11 @@ type BlobPool struct {
 	stored uint64         // Useful data size of all transactions on disk
 	limbo  *limbo         // Persistent data store for the non-finalized blobs
 
+	queue            map[common.Hash]*types.Transaction
+	indexQueue       map[common.Address][]*blobTxMeta          // tx hashes in queue per address, sorted by nonce
+	spentQueue       map[common.Address]*uint256.Int           // Expenditure tracking for accounts, only for buffered txs
+	replacementQueue map[common.Address]map[uint64]*blobTxMeta // Replacement queue for pooled transactions
+
 	signer types.Signer // Transaction signer to use for sender recovery
 	chain  BlockChain   // Chain object to access the state through
 
@@ -403,13 +406,17 @@ func New(config Config, chain BlockChain, hasPendingAuth func(common.Address) bo
 
 	// Create the transaction pool with its initial settings
 	return &BlobPool{
-		config:         config,
-		hasPendingAuth: hasPendingAuth,
-		signer:         types.LatestSigner(chain.Config()),
-		chain:          chain,
-		lookup:         newLookup(),
-		index:          make(map[common.Address][]*blobTxMeta),
-		spent:          make(map[common.Address]*uint256.Int),
+		config:           config,
+		hasPendingAuth:   hasPendingAuth,
+		signer:           types.LatestSigner(chain.Config()),
+		chain:            chain,
+		lookup:           newLookup(),
+		index:            make(map[common.Address][]*blobTxMeta),
+		spent:            make(map[common.Address]*uint256.Int),
+		queue:            make(map[common.Hash]*types.Transaction),
+		indexQueue:       make(map[common.Address][]*blobTxMeta),
+		spentQueue:       make(map[common.Address]*uint256.Int),
+		replacementQueue: make(map[common.Address]map[uint64]*blobTxMeta),
 	}
 }
 
@@ -511,6 +518,8 @@ func (p *BlobPool) Init(gasTip uint64, head *types.Header, reserver txpool.Reser
 	// Update the metrics and return the constructed pool
 	datacapGauge.Update(int64(p.config.Datacap))
 	p.updateStorageMetrics()
+
+	p.queue = make(map[common.Hash]*types.Transaction)
 	return nil
 }
 
@@ -1082,7 +1091,7 @@ func (p *BlobPool) reinject(addr common.Address, txhash common.Hash) error {
 	}
 
 	// Update the indices and metrics
-	meta := newBlobTxMeta(id, tx.Size, p.store.Size(id), tx.Transaction)
+	meta := newBlobTxMeta(id, tx.Transaction.Size(), p.store.Size(id), tx.Transaction)
 	if _, ok := p.index[addr]; !ok {
 		if err := p.reserver.Hold(addr); err != nil {
 			log.Warn("Failed to reserve account for blob pool", "tx", tx.Transaction.Hash(), "from", addr, "err", err)
@@ -1213,19 +1222,25 @@ func (p *BlobPool) checkDelegationLimit(tx *types.Transaction) error {
 	return txpool.ErrInflightTxLimitReached
 }
 
+func (p *BlobPool) ValidateCells(txs []common.Hash, cells [][]kzg4844.Cell, custody *types.CustodyBitmap) []error {
+	errors := make([]error, len(txs))
+
+	indices := custody.Indices()
+	for i, tx := range txs {
+		if _, ok := p.queue[tx]; !ok {
+			errors[i] = fmt.Errorf("transaction %s not found", tx)
+		}
+		sidecar := p.queue[tx].BlobTxSidecar()
+		errors[i] = kzg4844.VerifyCells(cells[i], sidecar.Commitments, sidecar.Proofs, indices)
+	}
+	return errors
+}
+
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
-func (p *BlobPool) validateTx(tx *types.Transaction, cellSidecar *types.BlobTxCellSidecar) error {
-	if tx.BlobTxSidecar() != nil || cellSidecar == nil {
-		return errors.New("malformed transaction and cellSidecar")
-	}
-	if err := txpool.ValidateBlobSidecar(tx, cellSidecar, p.head, &txpool.ValidationOptions{
-		Config:       p.chain.Config(),
-		MaxBlobCount: maxBlobsPerTx,
-	}); err != nil {
-		return err
-	}
-
+// If buffer field is set to true, consider txs in the queue as well.
+// This is to prevent fetching cells of invalid transactions, which would be expansive
+func (p *BlobPool) validateTx(tx *types.Transaction, buffer bool) error {
 	if err := p.ValidateTxBasics(tx); err != nil {
 		return err
 	}
@@ -1237,23 +1252,61 @@ func (p *BlobPool) validateTx(tx *types.Transaction, cellSidecar *types.BlobTxCe
 			// Nonce gaps are not permitted in the blob pool, the first gap will
 			// be the next nonce shifted by however many transactions we already
 			// have pooled.
-			return p.state.GetNonce(addr) + uint64(len(p.index[addr]))
+			result := p.state.GetNonce(addr) + uint64(len(p.index[addr]))
+			if buffer {
+				return result + uint64(len(p.indexQueue[addr]))
+			}
+			return result
 		},
 		UsedAndLeftSlots: func(addr common.Address) (int, int) {
 			have := len(p.index[addr])
+			if buffer {
+				have += len(p.indexQueue[addr])
+			}
 			if have >= maxTxsPerAccount {
 				return have, 0
 			}
 			return have, maxTxsPerAccount - have
 		},
 		ExistingExpenditure: func(addr common.Address) *big.Int {
+			result := new(big.Int)
 			if spent := p.spent[addr]; spent != nil {
-				return spent.ToBig()
+				result.Add(result, spent.ToBig())
 			}
-			return new(big.Int)
+
+			// calculate expenditure after replacements
+			if buffer {
+				if replacements := p.replacementQueue[addr]; replacements != nil {
+					next := p.state.GetNonce(addr)
+
+					for nonce, replacement := range replacements {
+						if len(p.index[addr]) > int(nonce-next) {
+							// replacement
+							originalCost := p.index[addr][nonce-next].costCap
+							replacementCost := replacement.costCap
+
+							result.Add(result, new(uint256.Int).Sub(replacementCost, originalCost).ToBig())
+						}
+					}
+				}
+
+				if spentQueue := p.spentQueue[addr]; spentQueue != nil {
+					result.Add(result, spentQueue.ToBig())
+				}
+			}
+
+			return result
 		},
 		ExistingCost: func(addr common.Address, nonce uint64) *big.Int {
 			next := p.state.GetNonce(addr)
+			if buffer {
+				if p.replacementQueue[addr] != nil && p.replacementQueue[addr][nonce] != nil {
+					return p.replacementQueue[addr][nonce].costCap.ToBig()
+				}
+				if uint64(len(p.indexQueue[addr])) > nonce-next-uint64(len(p.index[addr])) {
+					return p.indexQueue[addr][nonce-next-uint64(len(p.index[addr]))].costCap.ToBig()
+				}
+			}
 			if uint64(len(p.index[addr])) > nonce-next {
 				return p.index[addr][int(nonce-next)].costCap.ToBig()
 			}
@@ -1272,37 +1325,57 @@ func (p *BlobPool) validateTx(tx *types.Transaction, cellSidecar *types.BlobTxCe
 		from, _ = types.Sender(p.signer, tx) // already validated above
 		next    = p.state.GetNonce(from)
 	)
-	if uint64(len(p.index[from])) > tx.Nonce()-next {
-		prev := p.index[from][int(tx.Nonce()-next)]
-		// Ensure the transaction is different than the one tracked locally
-		if prev.hash == tx.Hash() {
-			return txpool.ErrAlreadyKnown
-		}
-		// Account can support the replacement, but the price bump must also be met
-		switch {
-		case tx.GasFeeCapIntCmp(prev.execFeeCap.ToBig()) <= 0:
-			return fmt.Errorf("%w: new tx gas fee cap %v <= %v queued", txpool.ErrReplaceUnderpriced, tx.GasFeeCap(), prev.execFeeCap)
-		case tx.GasTipCapIntCmp(prev.execTipCap.ToBig()) <= 0:
-			return fmt.Errorf("%w: new tx gas tip cap %v <= %v queued", txpool.ErrReplaceUnderpriced, tx.GasTipCap(), prev.execTipCap)
-		case tx.BlobGasFeeCapIntCmp(prev.blobFeeCap.ToBig()) <= 0:
-			return fmt.Errorf("%w: new tx blob gas fee cap %v <= %v queued", txpool.ErrReplaceUnderpriced, tx.BlobGasFeeCap(), prev.blobFeeCap)
-		}
-		var (
-			multiplier = uint256.NewInt(100 + p.config.PriceBump)
-			onehundred = uint256.NewInt(100)
+	var prev *blobTxMeta
+	nonce := tx.Nonce()
 
-			minGasFeeCap     = new(uint256.Int).Div(new(uint256.Int).Mul(multiplier, prev.execFeeCap), onehundred)
-			minGasTipCap     = new(uint256.Int).Div(new(uint256.Int).Mul(multiplier, prev.execTipCap), onehundred)
-			minBlobGasFeeCap = new(uint256.Int).Div(new(uint256.Int).Mul(multiplier, prev.blobFeeCap), onehundred)
-		)
-		switch {
-		case tx.GasFeeCapIntCmp(minGasFeeCap.ToBig()) < 0:
-			return fmt.Errorf("%w: new tx gas fee cap %v < %v queued + %d%% replacement penalty", txpool.ErrReplaceUnderpriced, tx.GasFeeCap(), prev.execFeeCap, p.config.PriceBump)
-		case tx.GasTipCapIntCmp(minGasTipCap.ToBig()) < 0:
-			return fmt.Errorf("%w: new tx gas tip cap %v < %v queued + %d%% replacement penalty", txpool.ErrReplaceUnderpriced, tx.GasTipCap(), prev.execTipCap, p.config.PriceBump)
-		case tx.BlobGasFeeCapIntCmp(minBlobGasFeeCap.ToBig()) < 0:
-			return fmt.Errorf("%w: new tx blob gas fee cap %v < %v queued + %d%% replacement penalty", txpool.ErrReplaceUnderpriced, tx.BlobGasFeeCap(), prev.blobFeeCap, p.config.PriceBump)
+	if nonce < next+uint64(len(p.index[from])) {
+		// pooled tx
+		prev = p.index[from][nonce-next]
+
+		// check replacement if it is buffer tx validation
+		if buffer && p.replacementQueue[from] != nil {
+			if replacement := p.replacementQueue[from][nonce]; replacement != nil {
+				prev = replacement
+			}
 		}
+	} else if buffer {
+		offset := nonce - next - uint64(len(p.index[from]))
+		if uint64(len(p.indexQueue[from])) > offset && offset > 0 {
+			// buffet tx replacement
+			prev = p.indexQueue[from][nonce-next-uint64(len(p.index[from]))]
+		}
+	}
+	if prev == nil {
+		return nil
+	}
+	// Ensure the transaction is different than the one tracked locally
+	if prev.hash == tx.Hash() {
+		return txpool.ErrAlreadyKnown
+	}
+	// Account can support the replacement, but the price bump must also be met
+	switch {
+	case tx.GasFeeCapIntCmp(prev.execFeeCap.ToBig()) <= 0:
+		return fmt.Errorf("%w: new tx gas fee cap %v <= %v queued", txpool.ErrReplaceUnderpriced, tx.GasFeeCap(), prev.execFeeCap)
+	case tx.GasTipCapIntCmp(prev.execTipCap.ToBig()) <= 0:
+		return fmt.Errorf("%w: new tx gas tip cap %v <= %v queued", txpool.ErrReplaceUnderpriced, tx.GasTipCap(), prev.execTipCap)
+	case tx.BlobGasFeeCapIntCmp(prev.blobFeeCap.ToBig()) <= 0:
+		return fmt.Errorf("%w: new tx blob gas fee cap %v <= %v queued", txpool.ErrReplaceUnderpriced, tx.BlobGasFeeCap(), prev.blobFeeCap)
+	}
+	var (
+		multiplier = uint256.NewInt(100 + p.config.PriceBump)
+		onehundred = uint256.NewInt(100)
+
+		minGasFeeCap     = new(uint256.Int).Div(new(uint256.Int).Mul(multiplier, prev.execFeeCap), onehundred)
+		minGasTipCap     = new(uint256.Int).Div(new(uint256.Int).Mul(multiplier, prev.execTipCap), onehundred)
+		minBlobGasFeeCap = new(uint256.Int).Div(new(uint256.Int).Mul(multiplier, prev.blobFeeCap), onehundred)
+	)
+	switch {
+	case tx.GasFeeCapIntCmp(minGasFeeCap.ToBig()) < 0:
+		return fmt.Errorf("%w: new tx gas fee cap %v < %v queued + %d%% replacement penalty", txpool.ErrReplaceUnderpriced, tx.GasFeeCap(), prev.execFeeCap, p.config.PriceBump)
+	case tx.GasTipCapIntCmp(minGasTipCap.ToBig()) < 0:
+		return fmt.Errorf("%w: new tx gas tip cap %v < %v queued + %d%% replacement penalty", txpool.ErrReplaceUnderpriced, tx.GasTipCap(), prev.execTipCap, p.config.PriceBump)
+	case tx.BlobGasFeeCapIntCmp(minBlobGasFeeCap.ToBig()) < 0:
+		return fmt.Errorf("%w: new tx blob gas fee cap %v < %v queued + %d%% replacement penalty", txpool.ErrReplaceUnderpriced, tx.BlobGasFeeCap(), prev.blobFeeCap, p.config.PriceBump)
 	}
 	return nil
 }
@@ -1541,15 +1614,21 @@ func (p *BlobPool) Add(txs []*types.Transaction, sync bool) []error {
 		if errs[i] != nil {
 			continue
 		}
-		cellSidecar, err := tx.BlobTxSidecar().ToBlobTxCellSidecar()
-		if err != nil {
-			errs[i] = err
-			continue
+		if tx.BlobTxSidecar().Blobs != nil {
+			// from the sender
+			cellSidecar, err := tx.BlobTxSidecar().ToBlobTxCellSidecar()
+			if err != nil {
+				errs[i] = err
+				continue
+			}
+			errs[i] = p.add(tx.WithoutBlobTxSidecar(), cellSidecar)
+		} else {
+			errs[i] = p.addBuffer(tx)
 		}
-		errs[i] = p.add(tx.WithoutBlobTxSidecar(), cellSidecar, tx.Size())
 		if errs[i] == nil {
 			adds = append(adds, tx.WithoutBlobTxSidecar())
 		}
+
 	}
 	if len(adds) > 0 {
 		p.discoverFeed.Send(core.NewTxsEvent{Txs: adds})
@@ -1558,9 +1637,127 @@ func (p *BlobPool) Add(txs []*types.Transaction, sync bool) []error {
 	return errs
 }
 
+func (p *BlobPool) AddPayload(txs []common.Hash, cells [][]kzg4844.Cell, custody *types.CustodyBitmap) []error {
+	errors := make([]error, len(txs))
+	for i, hash := range txs {
+		sidecar := p.queue[hash].BlobTxSidecar()
+		cellSidecar := types.BlobTxCellSidecar{
+			Cells:       cells[i],
+			Commitments: sidecar.Commitments,
+			Proofs:      sidecar.Proofs,
+			Custody:     *custody,
+		}
+
+		errors[i] = p.add(p.queue[hash].WithoutBlobTxSidecar(), &cellSidecar)
+
+		tx := p.queue[hash]
+		delete(p.queue, hash)
+		from, _ := types.Sender(p.signer, tx)
+		nonce := tx.Nonce()
+		next := p.state.GetNonce(from)
+
+		if p.replacementQueue[from] != nil {
+			// replacement tx
+			delete(p.replacementQueue[from], nonce)
+			if len(p.replacementQueue[from]) == 0 {
+				delete(p.replacementQueue, from)
+			}
+			break
+		}
+
+		// plain tx
+		offset := int(nonce - next - uint64(len(p.index[from])))
+		removed := p.indexQueue[from][offset]
+
+		p.indexQueue[from] = append(p.indexQueue[from][:offset], p.indexQueue[from][offset+1:]...)
+		p.spentQueue[from] = new(uint256.Int).Sub(p.spentQueue[from], removed.costCap)
+	}
+
+	return errors
+}
+
+func (p *BlobPool) addBuffer(tx *types.Transaction) (err error) {
+	if err := p.validateTx(tx, true); err != nil {
+		return err
+	}
+	p.queue[tx.Hash()] = tx
+	from, _ := types.Sender(p.signer, tx)
+
+	// Handle reserver for new accounts
+	if p.index[from] == nil && p.indexQueue[from] == nil {
+		if err := p.reserver.Hold(from); err != nil {
+			addNonExclusiveMeter.Mark(1)
+			return err
+		}
+		//todo release when evicted from the buffer
+		defer func() {
+			// If the transaction is rejected by some post-validation check, remove
+			// the lock on the reservation set.
+			//
+			// Note, `err` here is the named error return, which will be initialized
+			// by a return statement before running deferred methods. Take care with
+			// removing or subscoping err as it will break this clause.
+			if err != nil {
+				p.reserver.Release(from)
+			}
+		}()
+	}
+
+	next := p.state.GetNonce(from)
+	nonce := tx.Nonce()
+	pooledCount := uint64(len(p.index[from]))
+	meta := newBlobTxMeta(0, tx.Size(), 0, tx)
+
+	if nonce < next+pooledCount {
+		// Pooled transaction replacements are stored in replacementQueue for expenditure validation
+		// for future transactions from the same account. This overestimates expenditure considering
+		// that replacement transaction payload fetch may fail and the tx can be dropped.
+		// However, this conservative approach prevents transactions that passed validation when
+		// entering the buffer from failing expenditure validation due to transaction replacements.
+
+		if p.replacementQueue[from] == nil {
+			p.replacementQueue[from] = make(map[uint64]*blobTxMeta)
+		}
+
+		if existingReplacement := p.replacementQueue[from][nonce]; existingReplacement != nil {
+			delete(p.queue, existingReplacement.hash)
+		}
+
+		p.replacementQueue[from][nonce] = meta
+
+	} else {
+		if p.indexQueue[from] == nil {
+			p.indexQueue[from] = []*blobTxMeta{}
+		}
+		if p.spentQueue[from] == nil {
+			p.spentQueue[from] = new(uint256.Int)
+		}
+
+		bufferOffset := int(nonce - (next + pooledCount))
+		if len(p.indexQueue[from]) > bufferOffset {
+			// Replace buffer transaction
+			prev := p.indexQueue[from][bufferOffset]
+
+			delete(p.queue, prev.hash)
+
+			p.indexQueue[from][bufferOffset] = meta
+			p.spentQueue[from] = new(uint256.Int).Sub(p.spentQueue[from], prev.costCap)
+			p.spentQueue[from] = new(uint256.Int).Add(p.spentQueue[from], meta.costCap)
+
+			dropReplacedMeter.Mark(1)
+		} else {
+			p.indexQueue[from] = append(p.indexQueue[from], meta)
+			p.spentQueue[from] = new(uint256.Int).Add(p.spentQueue[from], meta.costCap)
+		}
+	}
+	p.queue[tx.Hash()] = tx
+
+	return nil
+}
+
 // add inserts a new blob transaction into the pool if it passes validation (both
 // consensus validity and pool restrictions).
-func (p *BlobPool) add(tx *types.Transaction, cellSidecar *types.BlobTxCellSidecar, size uint64) (err error) {
+func (p *BlobPool) add(tx *types.Transaction, cellSidecar *types.BlobTxCellSidecar) (err error) {
 	// The blob pool blocks on adding a transaction. This is because blob txs are
 	// only even pulled from the network, so this method will act as the overload
 	// protection for fetches.
@@ -1574,7 +1771,8 @@ func (p *BlobPool) add(tx *types.Transaction, cellSidecar *types.BlobTxCellSidec
 	}(time.Now())
 
 	// Ensure the transaction is valid from all perspectives
-	if err := p.validateTx(tx, cellSidecar); err != nil {
+	// If the tx and cells are delivered in a way that minizes nonce gap, vaidation should work when buffer == false
+	if err := p.validateTx(tx, false); err != nil {
 		log.Trace("Transaction validation failed", "hash", tx.Hash(), "err", err)
 		switch {
 		case errors.Is(err, txpool.ErrUnderpriced):
@@ -1596,30 +1794,23 @@ func (p *BlobPool) add(tx *types.Transaction, cellSidecar *types.BlobTxCellSidec
 		}
 		return err
 	}
+
+	if err := txpool.ValidateBlobSidecar(tx, cellSidecar, p.head, &txpool.ValidationOptions{
+		Config:       p.chain.Config(),
+		MaxBlobCount: maxBlobsPerTx,
+	}); err != nil {
+		return err
+	}
+
 	// If the address is not yet known, request exclusivity to track the account
 	// only by this subpool until all transactions are evicted
 	from, _ := types.Sender(p.signer, tx) // already validated above
-	if _, ok := p.index[from]; !ok {
-		if err := p.reserver.Hold(from); err != nil {
-			addNonExclusiveMeter.Mark(1)
-			return err
-		}
-		defer func() {
-			// If the transaction is rejected by some post-validation check, remove
-			// the lock on the reservation set.
-			//
-			// Note, `err` here is the named error return, which will be initialized
-			// by a return statement before running deferred methods. Take care with
-			// removing or subscoping err as it will break this clause.
-			if err != nil {
-				p.reserver.Release(from)
-			}
-		}()
-	}
+
+	// Reserver is already held in addBuffer
 
 	// Transaction permitted into the pool from a nonce and cost perspective,
 	// insert it into the database and update the indices
-	pooledTx := NewPooledBlobTx(tx, cellSidecar, size)
+	pooledTx := NewPooledBlobTx(tx, cellSidecar)
 	if pooledTx.RemoveParity() != nil {
 		return err
 	}
@@ -1633,7 +1824,7 @@ func (p *BlobPool) add(tx *types.Transaction, cellSidecar *types.BlobTxCellSidec
 	if err != nil {
 		return err
 	}
-	meta := newBlobTxMeta(id, pooledTx.Size, p.store.Size(id), tx)
+	meta := newBlobTxMeta(id, pooledTx.Transaction.Size(), p.store.Size(id), tx)
 
 	var (
 		next   = p.state.GetNonce(from)

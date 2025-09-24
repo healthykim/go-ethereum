@@ -248,7 +248,7 @@ func NewTxFetcherForTests(
 
 // Notify announces the fetcher of the potential availability of a new batch of
 // transactions in the network.
-func (f *TxFetcher) Notify(peer string, types []byte, sizes []uint32, hashes []common.Hash) error {
+func (f *TxFetcher) Notify(peer string, types []byte, sizes []uint32, hashes []common.Hash) ([]common.Hash, error) {
 	// Keep track of all the announced transactions
 	txAnnounceInMeter.Mark(int64(len(hashes)))
 
@@ -284,14 +284,14 @@ func (f *TxFetcher) Notify(peer string, types []byte, sizes []uint32, hashes []c
 
 	// If anything's left to announce, push it into the internal loop
 	if len(unknownHashes) == 0 {
-		return nil
+		return nil, nil
 	}
 	announce := &txAnnounce{origin: peer, hashes: unknownHashes, metas: unknownMetas}
 	select {
 	case f.notify <- announce:
-		return nil
+		return hashes, nil
 	case <-f.quit:
-		return errTerminated
+		return nil, errTerminated
 	}
 }
 
