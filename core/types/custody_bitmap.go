@@ -37,8 +37,8 @@ func NewCustodyBitmap(custody []uint64) CustodyBitmap {
 	return result
 }
 
-func (b CustodyBitmap) IsSet(i uint) bool {
-	if i >= uint(kzg4844.CellsPerBlob) {
+func (b CustodyBitmap) IsSet(i uint64) bool {
+	if i >= uint64(kzg4844.CellsPerBlob) {
 		return false
 	}
 	byteIdx := i / 8
@@ -47,8 +47,8 @@ func (b CustodyBitmap) IsSet(i uint) bool {
 }
 
 // Set ith bit
-func (b *CustodyBitmap) Set(i uint) error {
-	if i >= uint(kzg4844.CellsPerBlob) {
+func (b *CustodyBitmap) Set(i uint64) error {
+	if i >= uint64(kzg4844.CellsPerBlob) {
 		return errors.New("bit index out of range")
 	}
 	byteIdx := i / 8
@@ -58,8 +58,8 @@ func (b *CustodyBitmap) Set(i uint) error {
 }
 
 // Clear ith bit
-func (b *CustodyBitmap) Clear(i uint) error {
-	if i >= uint(kzg4844.CellsPerBlob) {
+func (b *CustodyBitmap) Clear(i uint64) error {
+	if i >= uint64(kzg4844.CellsPerBlob) {
 		return errors.New("bit index out of range")
 	}
 	byteIdx := i / 8

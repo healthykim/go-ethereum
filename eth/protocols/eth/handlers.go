@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/tracker"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -431,24 +432,29 @@ func handleReceipts[L ReceiptsList](backend Backend, msg Decoder, peer *Peer) er
 	}, metadata)
 }
 
-func handleNewPooledTransactionHashes(backend Backend, msg Decoder, peer *Peer) error {
-	// New transaction announcement arrived, make sure we have
-	// a valid and fresh chain to handle them
+func handleNewPooledTransactionHashes[T NewPooledTxPacket](backend Backend, msg Decoder, peer *Peer, ann T) error {
 	if !backend.AcceptTxs() {
 		return nil
 	}
-	ann := new(NewPooledTransactionHashesPacket70)
 	if err := msg.Decode(ann); err != nil {
 		return err
 	}
-	if len(ann.Hashes) != len(ann.Types) || len(ann.Hashes) != len(ann.Sizes) {
-		return fmt.Errorf("NewPooledTransactionHashes: invalid len of fields in %v %v %v", len(ann.Hashes), len(ann.Types), len(ann.Sizes))
+	hashes, types, sizes := packetFields(ann)
+	if len(hashes) != len(types) || len(hashes) != len(sizes) {
+		return fmt.Errorf("NewPooledTransactionHashes: invalid len of fields in %v %v %v",
+			len(hashes), len(types), len(sizes))
 	}
-	// Schedule all the unknown hashes for retrieval
-	for _, hash := range ann.Hashes {
+	for _, hash := range hashes {
 		peer.markTransaction(hash)
 	}
 	return backend.Handle(peer, ann)
+}
+
+func handleNewPooledTransactionHashes70(backend Backend, msg Decoder, peer *Peer) error {
+	return handleNewPooledTransactionHashes(backend, msg, peer, new(NewPooledTransactionHashesPacket70))
+}
+func handleNewPooledTransactionHashes71(backend Backend, msg Decoder, peer *Peer) error {
+	return handleNewPooledTransactionHashes(backend, msg, peer, new(NewPooledTransactionHashesPacket71))
 }
 
 func handleGetPooledTransactions(backend Backend, msg Decoder, peer *Peer) error {
@@ -473,6 +479,8 @@ func answerGetPooledTransactions(backend Backend, query GetPooledTransactionsReq
 			break
 		}
 		// Retrieve the requested transaction, skipping if unknown to us
+		// todo: for blob tx, if the peer supports below eth70, we have to deliver all blobs
+		// todo: if the peer supports eth71, we have to deliver blob == nil
 		encoded := backend.TxPool().GetRLP(hash)
 		if len(encoded) == 0 {
 			continue
@@ -537,4 +545,47 @@ func handleBlockRangeUpdate(backend Backend, msg Decoder, peer *Peer) error {
 	// We don't do anything with these messages for now, just store them on the peer.
 	peer.lastRange.Store(&update)
 	return nil
+}
+
+func handleGetCells(backend Backend, msg Decoder, peer *Peer) error {
+	// Decode the pooled transactions retrieval message
+	var query GetCellsRequestPacket
+	if err := msg.Decode(&query); err != nil {
+		return err
+	}
+	hashes, cells, custody := answerGetCells(backend, query.GetCellsRequest)
+	return peer.ReplyCells(query.RequestId, hashes, cells, custody)
+}
+
+func answerGetCells(backend Backend, query GetCellsRequest) ([]common.Hash, [][]kzg4844.Cell, types.CustodyBitmap) {
+	var (
+		cellCounts int
+		hashes     []common.Hash
+		cells      [][]kzg4844.Cell
+	)
+	maxCells := softResponseLimit / 2048
+	for _, hash := range query.Hashes {
+		if cellCounts >= maxCells {
+			break
+		}
+		cell := backend.BlobPool().GetCells(hash, query.Mask)
+		if len(cell) == 0 {
+			// skip this tx
+			continue
+		}
+		hashes = append(hashes, hash)
+		cells = append(cells, cell)
+		cellCounts += len(cell)
+	}
+	return hashes, cells, query.Mask
+}
+
+func handleCells(backend Backend, msg Decoder, peer *Peer) error {
+	var cellsResponse CellsResponsePacket
+	if err := msg.Decode(&cellsResponse); err != nil {
+		return err
+	}
+	requestTracker.Fulfil(peer.id, peer.version, CellsMsg, cellsResponse.RequestId)
+
+	return backend.Handle(peer, &cellsResponse.CellsResponse)
 }

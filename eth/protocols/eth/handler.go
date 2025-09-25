@@ -24,6 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
@@ -64,6 +65,8 @@ type Backend interface {
 	// TxPool retrieves the transaction pool object to serve data.
 	TxPool() TxPool
 
+	BlobPool() BlobPool
+
 	// AcceptTxs retrieves whether transaction processing is enabled on the node
 	// or if inbound transactions should simply be dropped.
 	AcceptTxs() bool
@@ -95,6 +98,11 @@ type TxPool interface {
 	// GetMetadata returns the transaction type and transaction size with the
 	// given transaction hash.
 	GetMetadata(hash common.Hash) *txpool.TxMetadata
+}
+
+type BlobPool interface {
+	// Get the cells of given transaction hash
+	GetCells(hash common.Hash, mask types.CustodyBitmap) []kzg4844.Cell
 }
 
 // MakeProtocols constructs the P2P protocol definitions for `eth`.
@@ -170,7 +178,7 @@ var eth68 = map[uint64]msgHandler{
 	NewBlockHashesMsg:             handleNewBlockhashes,
 	NewBlockMsg:                   handleNewBlock,
 	TransactionsMsg:               handleTransactions,
-	NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes,
+	NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes70,
 	GetBlockHeadersMsg:            handleGetBlockHeaders,
 	BlockHeadersMsg:               handleBlockHeaders,
 	GetBlockBodiesMsg:             handleGetBlockBodies,
@@ -183,7 +191,7 @@ var eth68 = map[uint64]msgHandler{
 
 var eth69 = map[uint64]msgHandler{
 	TransactionsMsg:               handleTransactions,
-	NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes,
+	NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes70,
 	GetBlockHeadersMsg:            handleGetBlockHeaders,
 	BlockHeadersMsg:               handleBlockHeaders,
 	GetBlockBodiesMsg:             handleGetBlockBodies,
@@ -193,6 +201,22 @@ var eth69 = map[uint64]msgHandler{
 	GetPooledTransactionsMsg:      handleGetPooledTransactions,
 	PooledTransactionsMsg:         handlePooledTransactions,
 	BlockRangeUpdateMsg:           handleBlockRangeUpdate,
+}
+
+var eth71 = map[uint64]msgHandler{
+	TransactionsMsg:               handleTransactions,
+	NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes71,
+	GetBlockHeadersMsg:            handleGetBlockHeaders,
+	BlockHeadersMsg:               handleBlockHeaders,
+	GetBlockBodiesMsg:             handleGetBlockBodies,
+	BlockBodiesMsg:                handleBlockBodies,
+	GetReceiptsMsg:                handleGetReceipts69,
+	ReceiptsMsg:                   handleReceipts[*ReceiptList69],
+	GetPooledTransactionsMsg:      handleGetPooledTransactions,
+	PooledTransactionsMsg:         handlePooledTransactions,
+	BlockRangeUpdateMsg:           handleBlockRangeUpdate,
+	GetCellsMsg:                   handleGetCells,
+	CellsMsg:                      handleCells,
 }
 
 // handleMessage is invoked whenever an inbound message is received from a remote
@@ -213,6 +237,8 @@ func handleMessage(backend Backend, peer *Peer) error {
 		handlers = eth68
 	} else if peer.version == ETH69 {
 		handlers = eth69
+	} else if peer.version == ETH71 {
+		handlers = eth71
 	} else {
 		return fmt.Errorf("unknown eth protocol version: %v", peer.version)
 	}

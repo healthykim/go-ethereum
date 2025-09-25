@@ -315,9 +315,6 @@ func TestBlobFetcherPartialFetch(t *testing.T) {
 	})
 }
 
-// todo wait timeout
-// todo drop
-
 // TestBlobFetcherFullDelivery tests cell delivery and fetch completion logic (full fetch)
 func TestBlobFetcherFullDelivery(t *testing.T) {
 	testBlobFetcher(t, blobFetcherTest{
@@ -357,10 +354,10 @@ func TestBlobFetcherFullDelivery(t *testing.T) {
 				},
 			},
 
-			// All alternates should be clean up on delivery
+			// All records should be cleaned up on delivery
 			doBlobEnqueue{peer: "A", hashes: []common.Hash{testBlobTxHashes[0]}, cells: [][]kzg4844.Cell{selectCells(testBlobSidecars[0].Cells, &halfCustody)}, custody: halfCustody},
 			isBlobScheduled{announces: nil, fetching: nil},
-			isFetching{hashes: nil}, // fetches should be empty after completion
+			isFetching{hashes: nil},
 			isCompleted{testBlobTxHashes[0]},
 		},
 	})
@@ -786,7 +783,6 @@ func testBlobFetcher(t *testing.T, tt blobFetcherTest) {
 			}
 
 		case isBlobScheduled:
-			// todo fetches
 			// Check tracking (announces) - bidirectional verification
 			for peer, announces := range step.announces {
 				peerAnnounces := fetcher.announces[peer]

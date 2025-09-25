@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
@@ -65,6 +66,8 @@ const (
 	GetReceiptsMsg                = 0x0f
 	ReceiptsMsg                   = 0x10
 	BlockRangeUpdateMsg           = 0x11
+	GetCellsMsg                   = 0x12
+	CellsMsg                      = 0x13
 )
 
 var (
@@ -292,6 +295,23 @@ type ReceiptsRLPPacket struct {
 	ReceiptsRLPResponse
 }
 
+type NewPooledTxPacket interface {
+	Packet
+	*NewPooledTransactionHashesPacket70 | *NewPooledTransactionHashesPacket71
+}
+
+func packetFields[T NewPooledTxPacket](p T) ([]common.Hash, []byte, []uint32) {
+	switch v := any(p).(type) {
+	case *NewPooledTransactionHashesPacket70:
+		return v.Hashes, v.Types, v.Sizes
+	case *NewPooledTransactionHashesPacket71:
+		return v.Hashes, v.Types, v.Sizes
+	default:
+		// unreachable
+		return nil, nil, nil
+	}
+}
+
 // NewPooledTransactionHashesPacket70 represents a transaction announcement packet on eth/68 and newer.
 type NewPooledTransactionHashesPacket70 struct {
 	Types  []byte
@@ -340,6 +360,26 @@ type BlockRangeUpdatePacket struct {
 	EarliestBlock   uint64
 	LatestBlock     uint64
 	LatestBlockHash common.Hash
+}
+
+type GetCellsRequest struct {
+	Hashes []common.Hash
+	Mask   types.CustodyBitmap
+}
+
+type GetCellsRequestPacket struct {
+	RequestId uint64
+	GetCellsRequest
+}
+
+type CellsResponse struct {
+	Hashes []common.Hash
+	Cells  [][]kzg4844.Cell
+	Mask   types.CustodyBitmap
+}
+type CellsResponsePacket struct {
+	RequestId uint64
+	CellsResponse
 }
 
 func (*StatusPacket68) Name() string { return "Status" }
@@ -392,3 +432,9 @@ func (*ReceiptsRLPResponse) Kind() byte   { return ReceiptsMsg }
 
 func (*BlockRangeUpdatePacket) Name() string { return "BlockRangeUpdate" }
 func (*BlockRangeUpdatePacket) Kind() byte   { return BlockRangeUpdateMsg }
+
+func (*GetCellsRequest) Name() string { return "GetCellsMsg" }
+func (*GetCellsRequest) Kind() byte   { return GetCellsMsg }
+
+func (*CellsResponse) Name() string { return "CellsMsg" }
+func (*CellsResponse) Kind() byte   { return CellsMsg }

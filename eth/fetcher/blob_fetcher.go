@@ -12,8 +12,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 )
 
-// todo remove partial / full
-
 type random interface {
 	Intn(n int) int
 }
@@ -26,7 +24,7 @@ type random interface {
 
 var blobFetchTimeout = 5 * time.Second
 
-// todo tuning
+// todo blob count should be delivered in announce. New type?
 const (
 	availabilityThreshold         = 2
 	maxPayloadRetrievals          = 128
@@ -101,7 +99,7 @@ type BlobFetcher struct {
 	// Stage 3: Transactions whose payloads/cells are currently being fetched (pull decision + not pull decision)
 	fetches  map[common.Hash]*fetchStatus // Hash -> Bitmap, in-flight transaction cells
 	requests map[string][]*cellRequest    // In-flight transaction retrievals
-	// todo simplify
+	// todo simplify / remove alterantes
 	alternates map[common.Hash]map[string]*types.CustodyBitmap // In-flight transaction alternate origins (in case the peer is dropped)
 
 	// Callbacks
@@ -149,6 +147,7 @@ func NewBlobFetcher(
 
 // Notify is called when a Type 3 transaction is observed on the network. (TransactionPacket / NewPooledTransactionHashesPacket)
 func (f *BlobFetcher) Notify(peer string, txs []common.Hash, cells types.CustodyBitmap) error {
+	// Validation regarding tx (e.g. hasTx etc) will be performed in txFetcher
 	blobAnnounce := &blobTxAnnounce{origin: peer, txs: txs, cells: cells}
 	select {
 	case f.notify <- blobAnnounce:
@@ -178,8 +177,7 @@ func (f *BlobFetcher) Enqueue(peer string, hashes []common.Hash, cells [][]kzg48
 				validatedTxs = append(validatedTxs, hashBatch[j])
 				validatedCells = append(validatedCells, cellBatch[j])
 			}
-			// todo - handler should return error for failed validations to disconnect
-			// Currently we silently drop invalid items and continue processing
+			// Currently we silently drop invalid items and continue processing -> should we disconnect?
 		}
 	}
 
@@ -228,7 +226,6 @@ func (f *BlobFetcher) loop() {
 		case ann := <-f.notify:
 			// Drop part of the announcements if too many have accumulated from that peer
 			// This prevents a peer from dominating the queue with txs without responding to the request
-			// todo maxPayloadAnnounces -> according to the number of blobs
 			used := len(f.waitslots[ann.origin]) + len(f.announces[ann.origin])
 			if used >= maxPayloadAnnounces {
 				// Already full

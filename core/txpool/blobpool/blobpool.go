@@ -172,7 +172,7 @@ func (ptx *PooledBlobTx) RemoveParity() error {
 	}
 
 	for bit := range kzg4844.DataPerBlob {
-		if !sc.Custody.IsSet(uint(bit)) {
+		if !sc.Custody.IsSet(uint64(bit)) {
 			return errors.New("cannot remove parity for non-full payload transaction")
 		}
 	}
@@ -191,7 +191,7 @@ func (ptx *PooledBlobTx) RemoveParity() error {
 		)
 
 		for bit := 64; bit < kzg4844.CellsPerBlob; bit++ {
-			sc.Custody.Clear(uint(bit))
+			sc.Custody.Clear(uint64(bit))
 		}
 	}
 
@@ -1385,8 +1385,11 @@ func (p *BlobPool) validateTx(tx *types.Transaction, buffer bool) error {
 func (p *BlobPool) Has(hash common.Hash) bool {
 	p.lock.RLock()
 	defer p.lock.RUnlock()
+	if p.lookup.exists(hash) || p.queue[hash] != nil {
+		return true
+	}
 
-	return p.lookup.exists(hash)
+	return false
 }
 
 func (p *BlobPool) getRLP(hash common.Hash) []byte {
@@ -1598,6 +1601,52 @@ func (p *BlobPool) AvailableBlobs(vhashes []common.Hash) int {
 		}
 	}
 	return available
+}
+
+func (p *BlobPool) GetCells(hash common.Hash, mask types.CustodyBitmap) []kzg4844.Cell {
+	var (
+		cells = make([]kzg4844.Cell, mask.OneCount())
+	)
+	id, ok := p.lookup.storeidOfTx(hash)
+	if !ok {
+		return nil
+	}
+	data, err := p.store.Get(id)
+	if err != nil {
+		log.Error("Tracked blob transaction missing from store", "id", id, "err", err)
+	}
+
+	// Decode the blob transaction
+	tx := new(types.Transaction)
+	var sidecar *types.BlobTxCellSidecar
+	pooledTx := new(PooledBlobTx)
+	if err := rlp.DecodeBytes(data, pooledTx); err != nil {
+		// try to decode in transaction type
+		if err := rlp.DecodeBytes(data, tx); err != nil {
+			log.Error("Blobs corrupted for traced transaction", "id", id, "err", err)
+			return nil
+		}
+		// convert blob sidecar to cell sidecar
+		sidecar, err = tx.BlobTxSidecar().ToBlobTxCellSidecar()
+		if err != nil {
+			return nil
+		}
+	} else {
+		sidecar = pooledTx.Sidecar
+	}
+
+	// select cells specified in mask, if there is no such cell, skip the tx
+	for cellIdx, custodyIdx := range sidecar.Custody.Indices() {
+		// check if the idx is stored
+		if mask.IsSet(custodyIdx) {
+			cells = append(cells, sidecar.Cells[cellIdx])
+		}
+	}
+	if len(cells) != mask.OneCount() {
+		return nil
+	}
+
+	return cells
 }
 
 // Add inserts a set of blob transactions into the pool if they pass validation (both
@@ -2177,8 +2226,14 @@ func (p *BlobPool) ContentFrom(addr common.Address) ([]*types.Transaction, []*ty
 // Status returns the known status (unknown/pending/queued) of a transaction
 // identified by their hashes.
 func (p *BlobPool) Status(hash common.Hash) txpool.TxStatus {
-	if p.Has(hash) {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+
+	if p.lookup.exists(hash) {
 		return txpool.TxStatusPending
+	}
+	if _, ok := p.queue[hash]; ok {
+		return txpool.TxStatusQueued
 	}
 	return txpool.TxStatusUnknown
 }

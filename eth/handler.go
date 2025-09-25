@@ -96,6 +96,7 @@ type txPool interface {
 }
 
 type blobPool interface {
+	GetCells(hash common.Hash, mask types.CustodyBitmap) []kzg4844.Cell
 	ValidateCells([]common.Hash, [][]kzg4844.Cell, *types.CustodyBitmap) []error
 	AddPayload([]common.Hash, [][]kzg4844.Cell, *types.CustodyBitmap) []error
 }

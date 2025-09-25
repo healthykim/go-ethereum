@@ -116,6 +116,37 @@ func (p *testTxPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
 	return nil
 }
 
+func (p *testTxPool) GetCells(hash common.Hash, mask types.CustodyBitmap) []kzg4844.Cell {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+
+	_, exists := p.txPool[hash]
+	if !exists {
+		return nil
+	}
+
+	var cells []kzg4844.Cell
+
+	if cells, exists = p.cellPool[hash]; !exists {
+		return nil
+	}
+
+	result := make([]kzg4844.Cell, 0, mask.OneCount())
+	for _, idx := range mask.Indices() {
+		if int(idx) < len(cells) {
+			result = append(result, cells[idx])
+		}
+	}
+	return result
+}
+
+// AddCells adds cells for a specific transaction hash (for testing)
+func (p *testTxPool) AddCells(hash common.Hash, cells []kzg4844.Cell) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	p.cellPool[hash] = cells
+}
+
 // Add appends a batch of transactions to the pool, and notifies any
 // listeners if the addition channel is non nil
 func (p *testTxPool) Add(txs []*types.Transaction, sync bool) []error {

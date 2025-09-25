@@ -23,6 +23,7 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/rlp"
 )
@@ -215,6 +216,17 @@ func (p *Peer) ReplyReceiptsRLP(id uint64, receipts []rlp.RawValue) error {
 	})
 }
 
+func (p *Peer) ReplyCells(id uint64, hashes []common.Hash, cells [][]kzg4844.Cell, mask types.CustodyBitmap) error {
+	return p2p.Send(p.rw, CellsMsg, &CellsResponsePacket{
+		RequestId: id,
+		CellsResponse: CellsResponse{
+			Hashes: hashes,
+			Cells:  cells,
+			Mask:   mask,
+		},
+	})
+}
+
 // RequestOneHeader is a wrapper around the header query functions to fetch a
 // single header. It is used solely by the fetcher.
 func (p *Peer) RequestOneHeader(hash common.Hash, sink chan *Response) (*Request, error) {
@@ -353,8 +365,15 @@ func (p *Peer) RequestTxs(hashes []common.Hash) error {
 
 // RequestTxs fetches a batch of transactions from a remote node.
 func (p *Peer) RequestPayload(hashes []common.Hash, cell *types.CustodyBitmap) error {
-	//todo
-	panic("unimplemented")
+	p.Log().Debug("Fetching batch of cells", "txcount", len(hashes), "cellcount", cell.OneCount())
+	id := rand.Uint64()
+	return p2p.Send(p.rw, GetCellsMsg, &GetCellsRequestPacket{
+		RequestId: id,
+		GetCellsRequest: GetCellsRequest{
+			Hashes: hashes,
+			Mask:   *cell,
+		},
+	})
 }
 
 // SendBlockRangeUpdate sends a notification about our available block range to the peer.

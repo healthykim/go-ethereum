@@ -45,6 +45,7 @@ type testEthHandler struct {
 
 func (h *testEthHandler) Chain() *core.BlockChain              { panic("no backing chain") }
 func (h *testEthHandler) TxPool() eth.TxPool                   { panic("no backing tx pool") }
+func (h *testEthHandler) BlobPool() eth.BlobPool               { panic("no backing blob pool") }
 func (h *testEthHandler) AcceptTxs() bool                      { return true }
 func (h *testEthHandler) RunPeer(*eth.Peer, eth.Handler) error { panic("not used in tests") }
 func (h *testEthHandler) PeerInfo(enode.ID) interface{}        { panic("not used in tests") }
