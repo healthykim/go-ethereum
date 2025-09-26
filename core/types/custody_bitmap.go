@@ -3,6 +3,7 @@ package types
 import (
 	"errors"
 	"math/bits"
+	"math/rand"
 
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 )
@@ -35,6 +36,28 @@ func NewCustodyBitmap(custody []uint64) CustodyBitmap {
 		panic("CustodyBitmap: bit index out of range")
 	}
 	return result
+}
+
+// NewRandomCustodyBitmap creates a CustodyBitmap with n randomly selected indices
+// This should be used only for test
+func NewRandomCustodyBitmap(n int) CustodyBitmap {
+	if n <= 0 || n > kzg4844.CellsPerBlob {
+		panic("CustodyBitmap: invalid number of indices")
+	}
+
+	// Generate random indices without duplicates
+	indices := make([]uint64, 0, n)
+	used := make(map[uint64]bool)
+
+	for len(indices) < n {
+		idx := uint64(rand.Intn(kzg4844.CellsPerBlob))
+		if !used[idx] {
+			used[idx] = true
+			indices = append(indices, idx)
+		}
+	}
+
+	return NewCustodyBitmap(indices)
 }
 
 func (b CustodyBitmap) IsSet(i uint64) bool {

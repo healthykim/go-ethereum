@@ -127,7 +127,7 @@ type SubPool interface {
 	Get(hash common.Hash) *types.Transaction
 
 	// GetRLP returns a RLP-encoded transaction if it is contained in the pool.
-	GetRLP(hash common.Hash) []byte
+	GetRLP(hash common.Hash, includeBlob bool) []byte
 
 	// GetMetadata returns the transaction type and transaction size with the
 	// given transaction hash.

@@ -1649,7 +1649,7 @@ func TestAdd(t *testing.T) {
 			signed, _ := types.SignNewTx(keys[add.from], types.LatestSigner(params.MainnetChainConfig), add.tx)
 			sidecar, _ := signed.BlobTxSidecar().ToBlobTxCellSidecar()
 
-			if err := pool.add(signed.WithoutBlobTxSidecar(), sidecar); !errors.Is(err, add.err) {
+			if err := pool.add(signed.WithoutBlob(), sidecar); !errors.Is(err, add.err) {
 				t.Errorf("test %d, tx %d: adding transaction error mismatch: have %v, want %v", i, j, err, add.err)
 			}
 			if add.err == nil {
@@ -2040,5 +2040,120 @@ func benchmarkPoolPending(b *testing.B, datacap uint64) {
 		if len(p) != int(capacity) {
 			b.Fatalf("have %d want %d", len(p), capacity)
 		}
+	}
+}
+
+func TestGetCells(t *testing.T) {
+	storage := t.TempDir()
+
+	os.MkdirAll(filepath.Join(storage, pendingTransactionStore), 0700)
+	store, _ := billy.Open(billy.Options{Path: filepath.Join(storage, pendingTransactionStore)}, newSlotter(params.BlobTxMaxBlobs), nil)
+
+	var (
+		key1, _ = crypto.GenerateKey()
+
+		addr1 = crypto.PubkeyToAddress(key1.PublicKey)
+
+		tx1 = makeMultiBlobTx(0, 1, 1000, 100, 3, 0, key1, types.BlobSidecarVersion1) // blobs [0, 3)
+
+		cellSidecar1, _ = tx1.BlobTxSidecar().ToBlobTxCellSidecar()
+		pooledTx1       = NewPooledBlobTx(tx1.WithoutBlob(), cellSidecar1)
+
+		blob1, _ = rlp.EncodeToBytes(pooledTx1)
+	)
+
+	store.Put(blob1)
+	store.Close()
+
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	statedb.AddBalance(addr1, uint256.NewInt(1_000_000_000), tracing.BalanceChangeUnspecified)
+	statedb.Commit(0, true, false)
+
+	chain := &testBlockChain{
+		config:  params.MainnetChainConfig,
+		basefee: uint256.NewInt(params.InitialBaseFee),
+		blobfee: uint256.NewInt(params.BlobTxMinBlobGasprice),
+		statedb: statedb,
+	}
+	pool := New(Config{Datadir: storage}, chain, nil)
+	if err := pool.Init(1, chain.CurrentBlock(), newReserver()); err != nil {
+		t.Fatalf("failed to create blob pool: %v", err)
+	}
+	defer pool.Close()
+
+	tests := []struct {
+		name        string
+		hash        common.Hash
+		mask        types.CustodyBitmap
+		expectedLen int
+		shouldFail  bool
+	}{
+		{
+			name:        "Get cells with single index",
+			hash:        tx1.Hash(),
+			mask:        types.NewCustodyBitmap([]uint64{5}),
+			expectedLen: 3,
+			shouldFail:  false,
+		},
+		{
+			name:        "Get cells with all indices",
+			hash:        tx1.Hash(),
+			mask:        *types.CustodyBitmapAll,
+			expectedLen: 384,
+			shouldFail:  false,
+		},
+		{
+			name:        "Get cells with no indices",
+			hash:        tx1.Hash(),
+			mask:        types.CustodyBitmap{},
+			expectedLen: 0,
+			shouldFail:  false,
+		},
+		{
+			name:        "Get cells for non-existent transaction",
+			hash:        common.Hash{0x01, 0x02, 0x03},
+			mask:        types.NewCustodyBitmap([]uint64{0, 1}),
+			expectedLen: 0,
+			shouldFail:  true,
+		},
+		{
+			name:        "Get cells with random indices",
+			hash:        tx1.Hash(),
+			mask:        types.NewRandomCustodyBitmap(8),
+			expectedLen: 24,
+			shouldFail:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cells, err := pool.GetCells(tt.hash, tt.mask)
+
+			if err != nil && !tt.shouldFail {
+				t.Errorf("expected to sucess, got %v", err)
+			}
+			if err == nil && tt.shouldFail {
+				t.Errorf("expected to fail, got %v", err)
+			}
+
+			if len(cells) != tt.expectedLen {
+				t.Errorf("expected %d cells, got %d", tt.expectedLen, len(cells))
+			}
+
+			if tt.expectedLen > 0 && tt.expectedLen%3 == 0 {
+				blobCount := 3
+				cellsPerBlob := tt.expectedLen / blobCount
+
+				for blobIdx := 0; blobIdx < blobCount; blobIdx++ {
+					startIdx := blobIdx * cellsPerBlob
+					endIdx := startIdx + cellsPerBlob
+
+					if endIdx > len(cells) {
+						t.Errorf("blob %d: expected cells up to index %d, but only have %d cells",
+							blobIdx, endIdx-1, len(cells))
+					}
+				}
+			}
+		})
 	}
 }

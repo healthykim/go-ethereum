@@ -93,7 +93,7 @@ type TxPool interface {
 
 	// GetRLP retrieves the RLP-encoded transaction from the local txpool with
 	// the given hash.
-	GetRLP(hash common.Hash) []byte
+	GetRLP(hash common.Hash, includeBlob bool) []byte
 
 	// GetMetadata returns the transaction type and transaction size with the
 	// given transaction hash.
@@ -102,7 +102,9 @@ type TxPool interface {
 
 type BlobPool interface {
 	// Get the cells of given transaction hash
-	GetCells(hash common.Hash, mask types.CustodyBitmap) []kzg4844.Cell
+	GetCells(hash common.Hash, mask types.CustodyBitmap) ([]kzg4844.Cell, error)
+	GetCustody(hash common.Hash) *types.CustodyBitmap
+	Has(hash common.Hash) bool
 }
 
 // MakeProtocols constructs the P2P protocol definitions for `eth`.
@@ -114,7 +116,7 @@ func MakeProtocols(backend Backend, network uint64, disc enode.Iterator) []p2p.P
 			Version: version,
 			Length:  protocolLengths[version],
 			Run: func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
-				peer := NewPeer(version, p, rw, backend.TxPool())
+				peer := NewPeer(version, p, rw, backend.TxPool(), backend.BlobPool())
 				defer peer.Close()
 
 				return backend.RunPeer(peer, func(peer *Peer) error {
@@ -233,13 +235,14 @@ func handleMessage(backend Backend, peer *Peer) error {
 	defer msg.Discard()
 
 	var handlers map[uint64]msgHandler
-	if peer.version == ETH68 {
+	switch peer.version {
+	case ETH68:
 		handlers = eth68
-	} else if peer.version == ETH69 {
+	case ETH69:
 		handlers = eth69
-	} else if peer.version == ETH71 {
+	case ETH71:
 		handlers = eth71
-	} else {
+	default:
 		return fmt.Errorf("unknown eth protocol version: %v", peer.version)
 	}
 

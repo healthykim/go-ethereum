@@ -76,7 +76,7 @@ type txPool interface {
 
 	// GetRLP retrieves the RLP-encoded transaction from local txpool
 	// with given tx hash.
-	GetRLP(hash common.Hash) []byte
+	GetRLP(hash common.Hash, includeBlob bool) []byte
 
 	// GetMetadata returns the transaction type and transaction size with the
 	// given transaction hash.
@@ -96,9 +96,11 @@ type txPool interface {
 }
 
 type blobPool interface {
-	GetCells(hash common.Hash, mask types.CustodyBitmap) []kzg4844.Cell
+	Has(hash common.Hash) bool
+	GetCells(hash common.Hash, mask types.CustodyBitmap) ([]kzg4844.Cell, error)
 	ValidateCells([]common.Hash, [][]kzg4844.Cell, *types.CustodyBitmap) []error
 	AddPayload([]common.Hash, [][]kzg4844.Cell, *types.CustodyBitmap) []error
+	GetCustody(hash common.Hash) *types.CustodyBitmap
 }
 
 // handlerConfig is the collection of initialization parameters to create a full
@@ -464,6 +466,7 @@ func (h *handler) Start(maxPeers int) {
 
 	// start sync handlers
 	h.txFetcher.Start()
+	h.blobFetcher.Start()
 
 	// start peer handler tracker
 	h.wg.Add(1)
@@ -474,6 +477,7 @@ func (h *handler) Stop() {
 	h.txsSub.Unsubscribe() // quits txBroadcastLoop
 	h.blockRange.stop()
 	h.txFetcher.Stop()
+	h.blobFetcher.Stop()
 	h.downloader.Terminate()
 
 	// Quit chainSync and txsync64.

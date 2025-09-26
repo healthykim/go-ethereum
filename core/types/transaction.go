@@ -484,6 +484,19 @@ func (tx *Transaction) WithoutBlobTxSidecar() *Transaction {
 	return cpy
 }
 
+// WithoutBlobTxSidecar returns a copy of tx with the blob sidecar removed.
+func (tx *Transaction) WithoutBlob() *Transaction {
+	blobtx, ok := tx.inner.(*BlobTx)
+	if !ok || blobtx.Sidecar == nil {
+		return tx
+	}
+
+	sidecarWithoutBlob := blobtx.Sidecar.Copy()
+	sidecarWithoutBlob.Blobs = nil
+
+	return tx.WithBlobTxSidecar(sidecarWithoutBlob)
+}
+
 // WithBlobTxSidecar returns a copy of tx with the blob sidecar added.
 func (tx *Transaction) WithBlobTxSidecar(sideCar *BlobTxSidecar) *Transaction {
 	blobtx, ok := tx.inner.(*BlobTx)

@@ -20,8 +20,10 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 )
@@ -63,7 +65,10 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		if err != nil {
 			return err
 		}
-		return h.blobFetcher.Notify(peer.ID(), hashes, packet.Mask)
+		if len(hashes) != 0 {
+			return h.blobFetcher.Notify(peer.ID(), hashes, packet.Mask)
+		}
+		return nil
 
 	case *eth.NewPooledTransactionHashesPacket70:
 		_, err := h.txFetcher.Notify(peer.ID(), packet.Types, packet.Sizes, packet.Hashes)
@@ -83,8 +88,15 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		// in the header, disconnect from the sending peer.
 		for _, tx := range *packet {
 			if tx.Type() == types.BlobTxType {
-				if tx.BlobTxSidecar() == nil {
-					return errors.New("received sidecar-less blob transaction")
+				if peer.Version() >= eth.ETH71 {
+					if len(tx.BlobTxSidecar().Blobs) != 0 {
+						return fmt.Errorf("not allowed to response full-blob transaction under eth71, received: %d", len(tx.BlobTxSidecar().Blobs))
+					}
+
+				} else {
+					if tx.BlobTxSidecar() == nil {
+						return errors.New("received sidecar-less blob transaction")
+					}
 				}
 				if err := tx.BlobTxSidecar().ValidateBlobCommitmentHashes(tx.BlobHashes()); err != nil {
 					return err
@@ -92,6 +104,21 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 			}
 		}
 		return h.txFetcher.Enqueue(peer.ID(), *packet, true)
+
+	case *eth.CellsResponse:
+		requested := packet.Mask.OneCount()
+		respond := min(len(packet.Hashes), len(packet.Cells))
+		hashes := make([]common.Hash, respond)
+		cells := make([][]kzg4844.Cell, respond)
+
+		for i := range respond {
+			if len(packet.Cells[i]) == requested {
+				hashes = append(hashes, packet.Hashes[i])
+				cells = append(cells, packet.Cells[i])
+			}
+		}
+
+		return h.blobFetcher.Enqueue(peer.ID(), hashes, cells, packet.Mask)
 
 	default:
 		return fmt.Errorf("unexpected eth packet type: %T", packet)

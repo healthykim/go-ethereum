@@ -51,7 +51,8 @@ type Peer struct {
 	version   uint              // Protocol version negotiated
 	lastRange atomic.Pointer[BlockRangeUpdatePacket]
 
-	txpool      TxPool             // Transaction pool used by the broadcasters for liveness checks
+	txpool      TxPool // Transaction pool used by the broadcasters for liveness checks
+	blobpool    BlobPool
 	knownTxs    *knownCache        // Set of transaction hashes known to be known by this peer
 	txBroadcast chan []common.Hash // Channel used to queue transaction propagation requests
 	txAnnounce  chan []common.Hash // Channel used to queue transaction announcement requests
@@ -65,7 +66,7 @@ type Peer struct {
 
 // NewPeer creates a wrapper for a network connection and negotiated  protocol
 // version.
-func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, txpool TxPool) *Peer {
+func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, txpool TxPool, blobpool BlobPool) *Peer {
 	peer := &Peer{
 		id:          p.ID().String(),
 		Peer:        p,
@@ -78,6 +79,7 @@ func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, txpool TxPool) *Pe
 		reqCancel:   make(chan *cancel),
 		resDispatch: make(chan *response),
 		txpool:      txpool,
+		blobpool:    blobpool,
 		term:        make(chan struct{}),
 	}
 	// Start up all the broadcasters
@@ -160,9 +162,12 @@ func (p *Peer) AsyncSendTransactions(hashes []common.Hash) {
 // This method is a helper used by the async transaction announcer. Don't call it
 // directly as the queueing (memory) and transmission (bandwidth) costs should
 // not be managed directly.
-func (p *Peer) sendPooledTransactionHashes(hashes []common.Hash, types []byte, sizes []uint32) error {
+func (p *Peer) sendPooledTransactionHashes(hashes []common.Hash, types []byte, sizes []uint32, cells types.CustodyBitmap) error {
 	// Mark all the transactions as known, but ensure we don't overflow our limits
 	p.knownTxs.Add(hashes...)
+	if p.version >= ETH71 {
+		return p2p.Send(p.rw, NewPooledTransactionHashesMsg, NewPooledTransactionHashesPacket71{Types: types, Sizes: sizes, Hashes: hashes, Mask: cells})
+	}
 	return p2p.Send(p.rw, NewPooledTransactionHashesMsg, NewPooledTransactionHashesPacket70{Types: types, Sizes: sizes, Hashes: hashes})
 }
 
@@ -217,7 +222,7 @@ func (p *Peer) ReplyReceiptsRLP(id uint64, receipts []rlp.RawValue) error {
 }
 
 func (p *Peer) ReplyCells(id uint64, hashes []common.Hash, cells [][]kzg4844.Cell, mask types.CustodyBitmap) error {
-	return p2p.Send(p.rw, CellsMsg, &CellsResponsePacket{
+	return p2p.Send(p.rw, CellsMsg, &CellsPacket{
 		RequestId: id,
 		CellsResponse: CellsResponse{
 			Hashes: hashes,

@@ -318,6 +318,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	// Permit the downloader to use the trie cache allowance during fast sync
 	cacheLimit := options.TrieCleanLimit + options.TrieDirtyLimit + options.SnapshotLimit
+	custody := types.NewRandomCustodyBitmap(64)
 	if eth.handler, err = newHandler(&handlerConfig{
 		NodeID:         eth.p2pServer.Self().ID(),
 		Database:       chainDb,
@@ -329,7 +330,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		BloomCache:     uint64(cacheLimit),
 		EventMux:       eth.eventMux,
 		RequiredBlocks: config.RequiredBlocks,
-		Custody:        *types.CustodyBitmapData,
+		Custody:        custody,
 	}); err != nil {
 		return nil, err
 	}

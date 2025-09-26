@@ -463,11 +463,11 @@ func handleGetPooledTransactions(backend Backend, msg Decoder, peer *Peer) error
 	if err := msg.Decode(&query); err != nil {
 		return err
 	}
-	hashes, txs := answerGetPooledTransactions(backend, query.GetPooledTransactionsRequest)
+	hashes, txs := answerGetPooledTransactions(backend, query.GetPooledTransactionsRequest, peer.version < ETH71)
 	return peer.ReplyPooledTransactionsRLP(query.RequestId, hashes, txs)
 }
 
-func answerGetPooledTransactions(backend Backend, query GetPooledTransactionsRequest) ([]common.Hash, []rlp.RawValue) {
+func answerGetPooledTransactions(backend Backend, query GetPooledTransactionsRequest, includeBlob bool) ([]common.Hash, []rlp.RawValue) {
 	// Gather transactions until the fetch or network limits is reached
 	var (
 		bytes  int
@@ -481,7 +481,7 @@ func answerGetPooledTransactions(backend Backend, query GetPooledTransactionsReq
 		// Retrieve the requested transaction, skipping if unknown to us
 		// todo: for blob tx, if the peer supports below eth70, we have to deliver all blobs
 		// todo: if the peer supports eth71, we have to deliver blob == nil
-		encoded := backend.TxPool().GetRLP(hash)
+		encoded := backend.TxPool().GetRLP(hash, includeBlob)
 		if len(encoded) == 0 {
 			continue
 		}
@@ -568,7 +568,7 @@ func answerGetCells(backend Backend, query GetCellsRequest) ([]common.Hash, [][]
 		if cellCounts >= maxCells {
 			break
 		}
-		cell := backend.BlobPool().GetCells(hash, query.Mask)
+		cell, _ := backend.BlobPool().GetCells(hash, query.Mask)
 		if len(cell) == 0 {
 			// skip this tx
 			continue
@@ -581,7 +581,7 @@ func answerGetCells(backend Backend, query GetCellsRequest) ([]common.Hash, [][]
 }
 
 func handleCells(backend Backend, msg Decoder, peer *Peer) error {
-	var cellsResponse CellsResponsePacket
+	var cellsResponse CellsPacket
 	if err := msg.Decode(&cellsResponse); err != nil {
 		return err
 	}

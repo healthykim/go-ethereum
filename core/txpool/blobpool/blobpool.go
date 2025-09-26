@@ -97,6 +97,8 @@ type blobTxMeta struct {
 	storageSize uint32 // Byte size in the pool's persistent store
 	size        uint64 // RLP-encoded size of transaction including the attached blob
 
+	custody *types.CustodyBitmap
+
 	nonce      uint64       // Needed to prioritize inclusion order within an account
 	costCap    *uint256.Int // Needed to validate cumulative balance sufficiency
 	execTipCap *uint256.Int // Needed to prioritize inclusion order across accounts and validate replacement price bump
@@ -115,7 +117,7 @@ type blobTxMeta struct {
 
 // newBlobTxMeta retrieves the indexed metadata fields from a blob transaction
 // and assembles a helper struct to track in memory.
-func newBlobTxMeta(id uint64, size uint64, storageSize uint32, tx *types.Transaction) *blobTxMeta {
+func newBlobTxMeta(id uint64, size uint64, storageSize uint32, tx *types.Transaction, custody *types.CustodyBitmap) *blobTxMeta {
 	meta := &blobTxMeta{
 		hash:        tx.Hash(),
 		vhashes:     tx.BlobHashes(),
@@ -129,6 +131,7 @@ func newBlobTxMeta(id uint64, size uint64, storageSize uint32, tx *types.Transac
 		blobFeeCap:  uint256.MustFromBig(tx.BlobGasFeeCap()),
 		execGas:     tx.Gas(),
 		blobGas:     tx.BlobGas(),
+		custody:     custody,
 	}
 	meta.basefeeJumps = dynamicFeeJumps(meta.execFeeCap)
 	meta.blobfeeJumps = dynamicFeeJumps(meta.blobFeeCap)
@@ -138,7 +141,8 @@ func newBlobTxMeta(id uint64, size uint64, storageSize uint32, tx *types.Transac
 
 type PooledBlobTx struct {
 	Transaction *types.Transaction
-	Sidecar     *types.BlobTxCellSidecar
+	// todo remove this type and leave cells and custody
+	Sidecar *types.BlobTxCellSidecar
 }
 
 func NewPooledBlobTx(tx *types.Transaction, sidecar *types.BlobTxCellSidecar) *PooledBlobTx {
@@ -164,39 +168,6 @@ func (ptx *PooledBlobTx) Convert() (*types.Transaction, error) {
 	sidecar := types.NewBlobTxSidecar(cellSidecar.Version, blobs, cellSidecar.Commitments, cellSidecar.Proofs)
 
 	return ptx.Transaction.WithBlobTxSidecar(sidecar), nil
-}
-func (ptx *PooledBlobTx) RemoveParity() error {
-	sc := ptx.Sidecar
-	if sc == nil {
-		return errors.New("nil sidecar")
-	}
-
-	for bit := range kzg4844.DataPerBlob {
-		if !sc.Custody.IsSet(uint64(bit)) {
-			return errors.New("cannot remove parity for non-full payload transaction")
-		}
-	}
-
-	blobCount := len(sc.Cells) / kzg4844.CellsPerBlob
-	if blobCount == 0 || len(sc.Cells)%kzg4844.CellsPerBlob != 0 {
-		return errors.New("inconsistent cell count")
-	}
-
-	var cellsWithoutParity []kzg4844.Cell
-	for blob := range blobCount {
-		offset := blob * kzg4844.CellsPerBlob
-		cellsWithoutParity = append(
-			cellsWithoutParity,
-			sc.Cells[offset:offset+kzg4844.DataPerBlob]...,
-		)
-
-		for bit := 64; bit < kzg4844.CellsPerBlob; bit++ {
-			sc.Custody.Clear(uint64(bit))
-		}
-	}
-
-	sc.Cells = cellsWithoutParity
-	return nil
 }
 
 // BlobPool is the transaction pool dedicated to EIP-4844 blob transactions.
@@ -547,8 +518,9 @@ func (p *BlobPool) Close() error {
 // parseTransaction is a callback method on pool creation that gets called for
 // each transaction on disk to create the in-memory metadata index.
 func (p *BlobPool) parseTransaction(id uint64, size uint32, blob []byte) error {
-	tx := new(types.Transaction)
+	meta := new(blobTxMeta)
 
+	tx := new(types.Transaction)
 	pooledTx := new(PooledBlobTx)
 	if err := rlp.DecodeBytes(blob, pooledTx); err != nil {
 		// This path is impossible unless the disk data representation changes
@@ -562,13 +534,14 @@ func (p *BlobPool) parseTransaction(id uint64, size uint32, blob []byte) error {
 			log.Error("Missing sidecar in blob pool entry", "id", id, "hash", tx.Hash())
 			return errors.New("missing sidecar")
 		}
+		meta = newBlobTxMeta(id, tx.Size(), size, tx, types.CustodyBitmapAll)
 	} else {
 		tx, err = pooledTx.Convert()
 		if err != nil {
 			return err
 		}
+		meta = newBlobTxMeta(id, tx.Size(), size, tx, &pooledTx.Sidecar.Custody)
 	}
-	meta := newBlobTxMeta(id, tx.Size(), size, tx)
 
 	if p.lookup.exists(meta.hash) {
 		// This path is only possible after a crash, where deleted items are not
@@ -1091,7 +1064,7 @@ func (p *BlobPool) reinject(addr common.Address, txhash common.Hash) error {
 	}
 
 	// Update the indices and metrics
-	meta := newBlobTxMeta(id, tx.Transaction.Size(), p.store.Size(id), tx.Transaction)
+	meta := newBlobTxMeta(id, tx.Transaction.Size(), p.store.Size(id), tx.Transaction, &tx.Sidecar.Custody)
 	if _, ok := p.index[addr]; !ok {
 		if err := p.reserver.Hold(addr); err != nil {
 			log.Warn("Failed to reserve account for blob pool", "tx", tx.Transaction.Hash(), "from", addr, "err", err)
@@ -1229,9 +1202,19 @@ func (p *BlobPool) ValidateCells(txs []common.Hash, cells [][]kzg4844.Cell, cust
 	for i, tx := range txs {
 		if _, ok := p.queue[tx]; !ok {
 			errors[i] = fmt.Errorf("transaction %s not found", tx)
+			continue
 		}
 		sidecar := p.queue[tx].BlobTxSidecar()
-		errors[i] = kzg4844.VerifyCells(cells[i], sidecar.Commitments, sidecar.Proofs, indices)
+		cellProofs := make([]kzg4844.Proof, 0)
+		for _, proofIdx := range indices {
+			// should store all proofs
+			for blobIdx := range len(sidecar.Commitments) {
+				idx := blobIdx*kzg4844.CellProofsPerBlob + int(proofIdx)
+				cellProofs = append(cellProofs, sidecar.Proofs[idx])
+			}
+		}
+
+		errors[i] = kzg4844.VerifyCells(cells[i], sidecar.Commitments, cellProofs, indices)
 	}
 	return errors
 }
@@ -1392,7 +1375,8 @@ func (p *BlobPool) Has(hash common.Hash) bool {
 	return false
 }
 
-func (p *BlobPool) getRLP(hash common.Hash) []byte {
+// todo remove includeBlob or modify Size calculation
+func (p *BlobPool) getRLP(hash common.Hash, includeBlob bool) []byte {
 	// Track the amount of time waiting to retrieve a fully resolved blob tx from
 	// the pool and the amount of time actually spent on pulling the data from disk.
 	getStart := time.Now()
@@ -1428,6 +1412,9 @@ func (p *BlobPool) getRLP(hash common.Hash) []byte {
 		log.Error("Failed to convert transaction in blobpool", "hash", hash, "id", id, "err", err)
 		return nil
 	}
+	if !includeBlob {
+		tx = tx.WithoutBlob()
+	}
 	encoded, err := rlp.EncodeToBytes(tx)
 	if err != nil {
 		log.Error("Failed to encode transaction in blobpool", "hash", hash, "id", id, "err", err)
@@ -1439,7 +1426,7 @@ func (p *BlobPool) getRLP(hash common.Hash) []byte {
 
 // Get returns a transaction if it is contained in the pool, or nil otherwise.
 func (p *BlobPool) Get(hash common.Hash) *types.Transaction {
-	data := p.getRLP(hash)
+	data := p.getRLP(hash, true)
 	if len(data) == 0 {
 		return nil
 	}
@@ -1460,8 +1447,8 @@ func (p *BlobPool) Get(hash common.Hash) *types.Transaction {
 }
 
 // GetRLP returns a RLP-encoded transaction if it is contained in the pool.
-func (p *BlobPool) GetRLP(hash common.Hash) []byte {
-	return p.getRLP(hash)
+func (p *BlobPool) GetRLP(hash common.Hash, includeBlob bool) []byte {
+	return p.getRLP(hash, includeBlob)
 }
 
 // GetMetadata returns the transaction type and transaction size with the
@@ -1481,6 +1468,15 @@ func (p *BlobPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
 		Type: types.BlobTxType,
 		Size: size,
 	}
+}
+
+func (p *BlobPool) GetCustody(hash common.Hash) *types.CustodyBitmap {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+	if meta := p.lookup.txIndex[hash]; meta != nil {
+		return &meta.custody
+	}
+	return nil
 }
 
 // GetBlobs returns a number of blobs and proofs for the given versioned hashes.
@@ -1603,17 +1599,14 @@ func (p *BlobPool) AvailableBlobs(vhashes []common.Hash) int {
 	return available
 }
 
-func (p *BlobPool) GetCells(hash common.Hash, mask types.CustodyBitmap) []kzg4844.Cell {
-	var (
-		cells = make([]kzg4844.Cell, mask.OneCount())
-	)
+func (p *BlobPool) GetCells(hash common.Hash, mask types.CustodyBitmap) ([]kzg4844.Cell, error) {
 	id, ok := p.lookup.storeidOfTx(hash)
 	if !ok {
-		return nil
+		return nil, errors.New("Requested cells doesn't exist")
 	}
 	data, err := p.store.Get(id)
 	if err != nil {
-		log.Error("Tracked blob transaction missing from store", "id", id, "err", err)
+		return nil, errors.New("Tracked blob transaction missing from store")
 	}
 
 	// Decode the blob transaction
@@ -1623,30 +1616,34 @@ func (p *BlobPool) GetCells(hash common.Hash, mask types.CustodyBitmap) []kzg484
 	if err := rlp.DecodeBytes(data, pooledTx); err != nil {
 		// try to decode in transaction type
 		if err := rlp.DecodeBytes(data, tx); err != nil {
-			log.Error("Blobs corrupted for traced transaction", "id", id, "err", err)
-			return nil
+			return nil, errors.New("Blobs corrupted for traced transaction")
 		}
 		// convert blob sidecar to cell sidecar
 		sidecar, err = tx.BlobTxSidecar().ToBlobTxCellSidecar()
 		if err != nil {
-			return nil
+			return nil, errors.New("Sidecar conversion failed")
 		}
 	} else {
+		tx = pooledTx.Transaction
 		sidecar = pooledTx.Sidecar
 	}
-
-	// select cells specified in mask, if there is no such cell, skip the tx
+	var (
+		cells = make([]kzg4844.Cell, 0, mask.OneCount()*len(tx.BlobHashes()))
+	)
 	for cellIdx, custodyIdx := range sidecar.Custody.Indices() {
-		// check if the idx is stored
 		if mask.IsSet(custodyIdx) {
-			cells = append(cells, sidecar.Cells[cellIdx])
+			for blobIdx := 0; blobIdx < len(tx.BlobHashes()); blobIdx++ {
+				idx := blobIdx*sidecar.Custody.OneCount() + cellIdx
+				cells = append(cells, sidecar.Cells[idx])
+			}
 		}
 	}
-	if len(cells) != mask.OneCount() {
-		return nil
+
+	if len(cells) != mask.OneCount()*len(tx.BlobHashes()) {
+		return nil, fmt.Errorf("Not enough cells: tx %s, needed %d, have %d", tx.Hash(), len(tx.BlobHashes())*mask.OneCount(), len(cells))
 	}
 
-	return cells
+	return cells, nil
 }
 
 // Add inserts a set of blob transactions into the pool if they pass validation (both
@@ -1663,19 +1660,19 @@ func (p *BlobPool) Add(txs []*types.Transaction, sync bool) []error {
 		if errs[i] != nil {
 			continue
 		}
-		if tx.BlobTxSidecar().Blobs != nil {
+		if len(tx.BlobTxSidecar().Blobs) != 0 {
 			// from the sender
 			cellSidecar, err := tx.BlobTxSidecar().ToBlobTxCellSidecar()
 			if err != nil {
 				errs[i] = err
 				continue
 			}
-			errs[i] = p.add(tx.WithoutBlobTxSidecar(), cellSidecar)
+			errs[i] = p.add(tx.WithoutBlob(), cellSidecar)
+			if errs[i] == nil {
+				adds = append(adds, tx.WithoutBlobTxSidecar())
+			}
 		} else {
 			errs[i] = p.addBuffer(tx)
-		}
-		if errs[i] == nil {
-			adds = append(adds, tx.WithoutBlobTxSidecar())
 		}
 	}
 	if len(adds) > 0 {
@@ -1686,18 +1683,50 @@ func (p *BlobPool) Add(txs []*types.Transaction, sync bool) []error {
 }
 
 func (p *BlobPool) AddPayload(txs []common.Hash, cells [][]kzg4844.Cell, custody *types.CustodyBitmap) []error {
-	errors := make([]error, len(txs))
+	var (
+		errs = make([]error, len(txs))
+		adds = make([]*types.Transaction, 0, len(txs))
+	)
 	for i, hash := range txs {
-		sidecar := p.queue[hash].BlobTxSidecar()
-		cellSidecar := types.BlobTxCellSidecar{
-			Cells:       cells[i],
-			Commitments: sidecar.Commitments,
-			Proofs:      sidecar.Proofs,
-			Custody:     *custody,
+		if p.queue[hash] == nil {
+			errs[i] = errors.New("Add payload of unknown transaction")
+			continue
 		}
 
-		errors[i] = p.add(p.queue[hash].WithoutBlobTxSidecar(), &cellSidecar)
+		sidecar := p.queue[hash].BlobTxSidecar()
 
+		var cellSidecar types.BlobTxCellSidecar
+		if len(cells) >= kzg4844.DataPerBlob {
+			blob, err := kzg4844.RecoverBlobs(cells[i], custody.Indices())
+			if err != nil {
+				errs[i] = err
+				continue
+			}
+			extendedCells, err := kzg4844.ComputeCells(blob)
+			cellSidecar = types.BlobTxCellSidecar{
+				Version:     sidecar.Version,
+				Cells:       extendedCells,
+				Commitments: sidecar.Commitments,
+				Proofs:      sidecar.Proofs,
+				Custody:     *types.CustodyBitmapAll,
+			}
+		} else {
+			cellSidecar = types.BlobTxCellSidecar{
+				Version:     sidecar.Version,
+				Cells:       cells[i],
+				Commitments: sidecar.Commitments,
+				Proofs:      sidecar.Proofs,
+				Custody:     *custody,
+			}
+		}
+
+		errs[i] = p.add(p.queue[hash].WithoutBlob(), &cellSidecar)
+		if errs[i] == nil {
+			adds = append(adds, p.queue[hash].WithoutBlobTxSidecar())
+		}
+		// todo nonce gap
+
+		// clean up queues
 		tx := p.queue[hash]
 		delete(p.queue, hash)
 		from, _ := types.Sender(p.signer, tx)
@@ -1710,18 +1739,24 @@ func (p *BlobPool) AddPayload(txs []common.Hash, cells [][]kzg4844.Cell, custody
 			if len(p.replacementQueue[from]) == 0 {
 				delete(p.replacementQueue, from)
 			}
-			break
+			continue
 		}
 
 		// plain tx
 		offset := int(nonce - next - uint64(len(p.index[from])))
-		removed := p.indexQueue[from][offset]
+		if offset > 0 && offset < len(p.indexQueue[from]) {
+			removed := p.indexQueue[from][offset]
 
-		p.indexQueue[from] = append(p.indexQueue[from][:offset], p.indexQueue[from][offset+1:]...)
-		p.spentQueue[from] = new(uint256.Int).Sub(p.spentQueue[from], removed.costCap)
+			p.indexQueue[from] = append(p.indexQueue[from][:offset], p.indexQueue[from][offset+1:]...)
+			p.spentQueue[from] = new(uint256.Int).Sub(p.spentQueue[from], removed.costCap)
+		}
+	}
+	if len(adds) > 0 {
+		p.discoverFeed.Send(core.NewTxsEvent{Txs: adds})
+		p.insertFeed.Send(core.NewTxsEvent{Txs: adds})
 	}
 
-	return errors
+	return errs
 }
 
 func (p *BlobPool) addBuffer(tx *types.Transaction) (err error) {
@@ -1754,7 +1789,7 @@ func (p *BlobPool) addBuffer(tx *types.Transaction) (err error) {
 	next := p.state.GetNonce(from)
 	nonce := tx.Nonce()
 	pooledCount := uint64(len(p.index[from]))
-	meta := newBlobTxMeta(0, tx.Size(), 0, tx)
+	meta := newBlobTxMeta(0, tx.Size(), 0, tx, nil)
 
 	if nonce < next+pooledCount {
 		// Pooled transaction replacements are stored in replacementQueue for expenditure validation
@@ -1773,9 +1808,6 @@ func (p *BlobPool) addBuffer(tx *types.Transaction) (err error) {
 
 		p.replacementQueue[from][nonce] = meta
 	} else {
-		if p.indexQueue[from] == nil {
-			p.indexQueue[from] = []*blobTxMeta{}
-		}
 		if p.spentQueue[from] == nil {
 			p.spentQueue[from] = new(uint256.Int)
 		}
@@ -1858,9 +1890,6 @@ func (p *BlobPool) add(tx *types.Transaction, cellSidecar *types.BlobTxCellSidec
 	// Transaction permitted into the pool from a nonce and cost perspective,
 	// insert it into the database and update the indices
 	pooledTx := NewPooledBlobTx(tx, cellSidecar)
-	if pooledTx.RemoveParity() != nil {
-		return err
-	}
 
 	blob, err := rlp.EncodeToBytes(pooledTx)
 	if err != nil {
@@ -1871,7 +1900,7 @@ func (p *BlobPool) add(tx *types.Transaction, cellSidecar *types.BlobTxCellSidec
 	if err != nil {
 		return err
 	}
-	meta := newBlobTxMeta(id, pooledTx.Transaction.Size(), p.store.Size(id), tx)
+	meta := newBlobTxMeta(id, pooledTx.Transaction.Size(), p.store.Size(id), tx, &pooledTx.Sidecar.Custody)
 
 	var (
 		next   = p.state.GetNonce(from)

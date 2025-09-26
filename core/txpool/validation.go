@@ -203,7 +203,16 @@ func validateBlobSidecarOsaka(sidecar *types.BlobTxCellSidecar, hashes []common.
 	if len(sidecar.Proofs) != len(hashes)*kzg4844.CellProofsPerBlob {
 		return fmt.Errorf("invalid number of %d blob proofs expected %d", len(sidecar.Proofs), len(hashes)*kzg4844.CellProofsPerBlob)
 	}
-	return kzg4844.VerifyCells(sidecar.Cells, sidecar.Commitments, sidecar.Proofs, sidecar.Custody.Indices())
+	indices := sidecar.Custody.Indices()
+	cellProofs := make([]kzg4844.Proof, 0)
+	for _, proofIdx := range indices {
+		// should store all proofs
+		for blobIdx := range len(sidecar.Commitments) {
+			idx := blobIdx*kzg4844.CellProofsPerBlob + int(proofIdx)
+			cellProofs = append(cellProofs, sidecar.Proofs[idx])
+		}
+	}
+	return kzg4844.VerifyCells(sidecar.Cells, sidecar.Commitments, cellProofs, sidecar.Custody.Indices())
 }
 
 // ValidationOptionsWithState define certain differences between stateful transaction

@@ -24,7 +24,7 @@ type random interface {
 
 var blobFetchTimeout = 5 * time.Second
 
-// todo blob count should be delivered in announce. New type?
+// todo blob count should be delivered in announce.
 const (
 	availabilityThreshold         = 2
 	maxPayloadRetrievals          = 128
@@ -382,7 +382,8 @@ func (f *BlobFetcher) loop() {
 			// same peer (either overloaded or malicious, useless in both cases).
 			// Update blobpool according to availability result.
 			for peer, requests := range f.requests {
-				for i, req := range requests {
+				newRequests := make([]*cellRequest, 0)
+				for _, req := range requests {
 					if time.Duration(f.clock.Now()-req.time)+txGatherSlack > blobFetchTimeout {
 						// Reschedule all timeout cells to alternate peers
 						for _, hash := range req.txs {
@@ -401,13 +402,14 @@ func (f *BlobFetcher) loop() {
 						if len(f.announces[peer]) == 0 {
 							delete(f.announces, peer)
 						}
-						// remove request
-						f.requests[peer][i] = f.requests[peer][len(f.requests[peer])-1]
-						f.requests[peer] = f.requests[peer][:len(f.requests[peer])-1]
-						if len(f.requests[peer]) == 0 {
-							delete(f.requests, peer)
-						}
+					} else {
+						newRequests = append(newRequests, req)
 					}
+				}
+				// remove request
+				f.requests[peer] = newRequests
+				if len(f.requests[peer]) == 0 {
+					delete(f.requests, peer)
 				}
 			}
 

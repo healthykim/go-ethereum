@@ -42,6 +42,8 @@ func (p *Peer) Handshake(networkID uint64, chain *core.BlockChain, rangeMsg Bloc
 		return p.handshake69(networkID, chain, rangeMsg)
 	case ETH68:
 		return p.handshake68(networkID, chain)
+	case ETH71:
+		return p.handshake68(networkID, chain)
 	default:
 		return errors.New("unsupported protocol version")
 	}

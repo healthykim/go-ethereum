@@ -17,6 +17,7 @@
 package eth
 
 import (
+	"errors"
 	"maps"
 	"math/big"
 	"math/rand"
@@ -58,6 +59,8 @@ type testTxPool struct {
 	txPool   map[common.Hash]*types.Transaction // Hash map of collected transactions
 	cellPool map[common.Hash][]kzg4844.Cell
 
+	custody map[common.Hash]types.CustodyBitmap
+
 	txFeed event.Feed   // Notification feed to allow waiting for inclusion
 	lock   sync.RWMutex // Protects the transaction pool
 }
@@ -65,7 +68,9 @@ type testTxPool struct {
 // newTestTxPool creates a mock transaction pool.
 func newTestTxPool() *testTxPool {
 	return &testTxPool{
-		txPool: make(map[common.Hash]*types.Transaction),
+		txPool:   make(map[common.Hash]*types.Transaction),
+		cellPool: make(map[common.Hash][]kzg4844.Cell),
+		custody:  make(map[common.Hash]types.CustodyBitmap),
 	}
 }
 
@@ -88,7 +93,7 @@ func (p *testTxPool) Get(hash common.Hash) *types.Transaction {
 
 // Get retrieves the transaction from local txpool with given
 // tx hash.
-func (p *testTxPool) GetRLP(hash common.Hash) []byte {
+func (p *testTxPool) GetRLP(hash common.Hash, includedBlob bool) []byte {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -116,19 +121,19 @@ func (p *testTxPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
 	return nil
 }
 
-func (p *testTxPool) GetCells(hash common.Hash, mask types.CustodyBitmap) []kzg4844.Cell {
+func (p *testTxPool) GetCells(hash common.Hash, mask types.CustodyBitmap) ([]kzg4844.Cell, error) {
 	p.lock.RLock()
 	defer p.lock.RUnlock()
 
 	_, exists := p.txPool[hash]
 	if !exists {
-		return nil
+		return nil, errors.New("Requested tx does not exist")
 	}
 
 	var cells []kzg4844.Cell
 
 	if cells, exists = p.cellPool[hash]; !exists {
-		return nil
+		return nil, errors.New("Requested cells do not exist")
 	}
 
 	result := make([]kzg4844.Cell, 0, mask.OneCount())
@@ -137,14 +142,25 @@ func (p *testTxPool) GetCells(hash common.Hash, mask types.CustodyBitmap) []kzg4
 			result = append(result, cells[idx])
 		}
 	}
-	return result
+	return result, nil
+}
+
+func (p *testTxPool) GetCustody(hash common.Hash) *types.CustodyBitmap {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+	mask, ok := p.custody[hash]
+	if !ok {
+		return nil
+	}
+	return &mask
 }
 
 // AddCells adds cells for a specific transaction hash (for testing)
-func (p *testTxPool) AddCells(hash common.Hash, cells []kzg4844.Cell) {
+func (p *testTxPool) AddCells(hash common.Hash, cells []kzg4844.Cell, mask types.CustodyBitmap) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	p.cellPool[hash] = cells
+	p.custody[hash] = mask
 }
 
 // Add appends a batch of transactions to the pool, and notifies any
@@ -221,10 +237,11 @@ func (p *testTxPool) ValidateCells(txs []common.Hash, cells [][]kzg4844.Cell, cu
 // preinitialized with some sane testing defaults and the transaction pool mocked
 // out.
 type testHandler struct {
-	db      ethdb.Database
-	chain   *core.BlockChain
-	txpool  *testTxPool
-	handler *handler
+	db       ethdb.Database
+	chain    *core.BlockChain
+	txpool   *testTxPool
+	blobpool *testTxPool
+	handler  *handler
 }
 
 // newTestHandler creates a new handler for testing purposes with no blocks.
@@ -361,7 +378,7 @@ func createTestPeers(rand *rand.Rand, n int) []*ethPeer {
 		var id enode.ID
 		rand.Read(id[:])
 		p2pPeer := p2p.NewPeer(id, "test", nil)
-		ep := eth.NewPeer(eth.ETH69, p2pPeer, nil, nil)
+		ep := eth.NewPeer(eth.ETH69, p2pPeer, nil, nil, nil)
 		peers[i] = &ethPeer{Peer: ep}
 	}
 	return peers
