@@ -18,7 +18,6 @@ package fetcher
 
 import (
 	"errors"
-	"fmt"
 	"math"
 	mrand "math/rand"
 	"sort"
@@ -195,9 +194,8 @@ type TxFetcher struct {
 	// Stage 3: Set of transactions currently being retrieved, some which may be
 	// fulfilled and some rescheduled. Note, this step shares 'announces' from the
 	// previous stage to avoid having to duplicate (need it for DoS checks).
-	fetching   map[common.Hash]string              // Transaction set currently being retrieved
-	requests   map[string]*txRequest               // In-flight transaction retrievals
-	alternates map[common.Hash]map[string]struct{} // In-flight transaction alternate origins if retrieval fails
+	fetching map[common.Hash]string // Transaction set currently being retrieved
+	requests map[string]*txRequest  // In-flight transaction retrievals
 
 	// Callbacks
 	hasTx    func(common.Hash) bool             // Retrieves a tx from the local txpool
@@ -234,7 +232,6 @@ func NewTxFetcherForTests(
 		announced:   make(map[common.Hash]map[string]struct{}),
 		fetching:    make(map[common.Hash]string),
 		requests:    make(map[string]*txRequest),
-		alternates:  make(map[common.Hash]map[string]struct{}),
 		underpriced: lru.NewCache[common.Hash, time.Time](maxTxUnderpricedSetSize),
 		hasTx:       hasTx,
 		addTxs:      addTxs,
@@ -457,12 +454,9 @@ func (f *TxFetcher) loop() {
 				}
 			)
 			for i, hash := range ann.hashes {
-				// If the transaction is already downloading, add it to the list
-				// of possible alternates (in case the current retrieval fails) and
-				// also account it for the peer.
-				if f.alternates[hash] != nil {
-					f.alternates[hash][ann.origin] = struct{}{}
-
+				// If the transaction is already downloading or queued from a different peer,
+				// track it for the new peer
+				if _, ok := f.announced[hash]; ok {
 					// Stage 2 and 3 share the set of origins per tx
 					if announces := f.announces[ann.origin]; announces != nil {
 						announces[hash] = &txMetadataWithSeq{
@@ -477,27 +471,8 @@ func (f *TxFetcher) loop() {
 							},
 						}
 					}
-					continue
-				}
-				// If the transaction is not downloading, but is already queued
-				// from a different peer, track it for the new peer too.
-				if f.announced[hash] != nil {
 					f.announced[hash][ann.origin] = struct{}{}
 
-					// Stage 2 and 3 share the set of origins per tx
-					if announces := f.announces[ann.origin]; announces != nil {
-						announces[hash] = &txMetadataWithSeq{
-							txMetadata: ann.metas[i],
-							seq:        nextSeq(),
-						}
-					} else {
-						f.announces[ann.origin] = map[common.Hash]*txMetadataWithSeq{
-							hash: {
-								txMetadata: ann.metas[i],
-								seq:        nextSeq(),
-							},
-						}
-					}
 					continue
 				}
 				// If the transaction is already known to the fetcher, but not
@@ -564,13 +539,13 @@ func (f *TxFetcher) loop() {
 
 		case <-waitTrigger:
 			// At least one transaction's waiting time ran out, push all expired
-			// ones into the retrieval queues
+			// ones into the announces
 			actives := make(map[string]struct{})
 			for hash, instance := range f.waittime {
 				if time.Duration(f.clock.Now()-instance)+txGatherSlack > txArriveTimeout {
 					// Transaction expired without propagation, schedule for retrieval
-					if f.announced[hash] != nil {
-						panic("announce tracker already contains waitlist item")
+					if _, ok := f.announced[hash]; ok {
+						panic("announced tracker already contains waitlist item")
 					}
 					f.announced[hash] = f.waitlist[hash]
 					for peer := range f.waitlist[hash] {
@@ -616,18 +591,11 @@ func (f *TxFetcher) loop() {
 							}
 						}
 						// Move the delivery back from fetching to queued
-						if _, ok := f.announced[hash]; ok {
-							panic("announced tracker already contains alternate item")
-						}
-						if f.alternates[hash] != nil { // nil if tx was broadcast during fetch
-							f.announced[hash] = f.alternates[hash]
-						}
 						delete(f.announced[hash], peer)
 						if len(f.announced[hash]) == 0 {
 							delete(f.announced, hash)
 						}
 						delete(f.announces[peer], hash)
-						delete(f.alternates, hash)
 						delete(f.fetching, hash)
 					}
 					if len(f.announces[peer]) == 0 {
@@ -700,7 +668,6 @@ func (f *TxFetcher) loop() {
 						}
 					}
 					delete(f.announced, hash)
-					delete(f.alternates, hash)
 
 					// If a transaction currently being fetched from a different
 					// origin was delivered (delivery stolen), mark it so the
@@ -752,20 +719,16 @@ func (f *TxFetcher) loop() {
 					}
 					if _, ok := delivered[hash]; !ok {
 						if i < cutoff {
-							delete(f.alternates[hash], delivery.origin)
+							delete(f.announced[hash], delivery.origin)
+							if len(f.announced[hash]) == 0 {
+								delete(f.announced, hash)
+							}
 							delete(f.announces[delivery.origin], hash)
 							if len(f.announces[delivery.origin]) == 0 {
 								delete(f.announces, delivery.origin)
 							}
 						}
-						if len(f.alternates[hash]) > 0 {
-							if _, ok := f.announced[hash]; ok {
-								panic(fmt.Sprintf("announced tracker already contains alternate item: %v", f.announced[hash]))
-							}
-							f.announced[hash] = f.alternates[hash]
-						}
 					}
-					delete(f.alternates, hash)
 					delete(f.fetching, hash)
 				}
 				// Something was delivered, try to reschedule requests
@@ -796,14 +759,6 @@ func (f *TxFetcher) loop() {
 						if _, ok := request.stolen[hash]; ok {
 							continue
 						}
-					}
-					// Undelivered hash, reschedule if there's an alternative origin available
-					delete(f.alternates[hash], drop.peer)
-					if len(f.alternates[hash]) == 0 {
-						delete(f.alternates, hash)
-					} else {
-						f.announced[hash] = f.alternates[hash]
-						delete(f.alternates, hash)
 					}
 					delete(f.fetching, hash)
 				}
@@ -941,12 +896,6 @@ func (f *TxFetcher) scheduleFetches(timer *mclock.Timer, timeout chan struct{}, 
 			}
 			// Mark the hash as fetching and stash away possible alternates
 			f.fetching[hash] = peer
-
-			if _, ok := f.alternates[hash]; ok {
-				panic(fmt.Sprintf("alternate tracker already contains fetching item: %v", f.alternates[hash]))
-			}
-			f.alternates[hash] = f.announced[hash]
-			delete(f.announced, hash)
 
 			// Accumulate the hash and stop if the limit was reached
 			hashes = append(hashes, hash)
