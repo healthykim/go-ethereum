@@ -108,183 +108,183 @@ func TestTransactionFetcherWaiting(t *testing.T) {
 					{common.Hash{0x02}, types.LegacyTxType, 222},
 				},
 			}),
-			// // Announce from a new peer to check that no overwrite happens
-			// doTxNotify{peer: "B", hashes: []common.Hash{{0x03}, {0x04}}, types: []byte{types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{333, 444}},
-			// isWaiting(map[string][]announce{
-			// 	"A": {
-			// 		{common.Hash{0x01}, types.LegacyTxType, 111},
-			// 		{common.Hash{0x02}, types.LegacyTxType, 222},
-			// 	},
-			// 	"B": {
-			// 		{common.Hash{0x03}, types.LegacyTxType, 333},
-			// 		{common.Hash{0x04}, types.LegacyTxType, 444},
-			// 	},
-			// }),
-			// // Announce clashing hashes but unique new peer
-			// doTxNotify{peer: "C", hashes: []common.Hash{{0x01}, {0x04}}, types: []byte{types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{111, 444}},
-			// isWaiting(map[string][]announce{
-			// 	"A": {
-			// 		{common.Hash{0x01}, types.LegacyTxType, 111},
-			// 		{common.Hash{0x02}, types.LegacyTxType, 222},
-			// 	},
-			// 	"B": {
-			// 		{common.Hash{0x03}, types.LegacyTxType, 333},
-			// 		{common.Hash{0x04}, types.LegacyTxType, 444},
-			// 	},
-			// 	"C": {
-			// 		{common.Hash{0x01}, types.LegacyTxType, 111},
-			// 		{common.Hash{0x04}, types.LegacyTxType, 444},
-			// 	},
-			// }),
-			// // Announce existing and clashing hashes from existing peer. Clashes
-			// // should not overwrite previous announcements.
-			// doTxNotify{peer: "A", hashes: []common.Hash{{0x01}, {0x03}, {0x05}}, types: []byte{types.LegacyTxType, types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{999, 333, 555}},
-			// isWaiting(map[string][]announce{
-			// 	"A": {
-			// 		{common.Hash{0x01}, types.LegacyTxType, 111},
-			// 		{common.Hash{0x02}, types.LegacyTxType, 222},
-			// 		{common.Hash{0x03}, types.LegacyTxType, 333},
-			// 		{common.Hash{0x05}, types.LegacyTxType, 555},
-			// 	},
-			// 	"B": {
-			// 		{common.Hash{0x03}, types.LegacyTxType, 333},
-			// 		{common.Hash{0x04}, types.LegacyTxType, 444},
-			// 	},
-			// 	"C": {
-			// 		{common.Hash{0x01}, types.LegacyTxType, 111},
-			// 		{common.Hash{0x04}, types.LegacyTxType, 444},
-			// 	},
-			// }),
-			// // Announce clashing hashes with conflicting metadata. Somebody will
-			// // be in the wrong, but we don't know yet who.
-			// doTxNotify{peer: "D", hashes: []common.Hash{{0x01}, {0x02}}, types: []byte{types.LegacyTxType, types.BlobTxType}, sizes: []uint32{999, 222}},
-			// isWaiting(map[string][]announce{
-			// 	"A": {
-			// 		{common.Hash{0x01}, types.LegacyTxType, 111},
-			// 		{common.Hash{0x02}, types.LegacyTxType, 222},
-			// 		{common.Hash{0x03}, types.LegacyTxType, 333},
-			// 		{common.Hash{0x05}, types.LegacyTxType, 555},
-			// 	},
-			// 	"B": {
-			// 		{common.Hash{0x03}, types.LegacyTxType, 333},
-			// 		{common.Hash{0x04}, types.LegacyTxType, 444},
-			// 	},
-			// 	"C": {
-			// 		{common.Hash{0x01}, types.LegacyTxType, 111},
-			// 		{common.Hash{0x04}, types.LegacyTxType, 444},
-			// 	},
-			// 	"D": {
-			// 		{common.Hash{0x01}, types.LegacyTxType, 999},
-			// 		{common.Hash{0x02}, types.BlobTxType, 222},
-			// 	},
-			// }),
-			// isScheduled{tracking: nil, fetching: nil},
+			// Announce from a new peer to check that no overwrite happens
+			doTxNotify{peer: "B", hashes: []common.Hash{{0x03}, {0x04}}, types: []byte{types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{333, 444}},
+			isWaiting(map[string][]announce{
+				"A": {
+					{common.Hash{0x01}, types.LegacyTxType, 111},
+					{common.Hash{0x02}, types.LegacyTxType, 222},
+				},
+				"B": {
+					{common.Hash{0x03}, types.LegacyTxType, 333},
+					{common.Hash{0x04}, types.LegacyTxType, 444},
+				},
+			}),
+			// Announce clashing hashes but unique new peer
+			doTxNotify{peer: "C", hashes: []common.Hash{{0x01}, {0x04}}, types: []byte{types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{111, 444}},
+			isWaiting(map[string][]announce{
+				"A": {
+					{common.Hash{0x01}, types.LegacyTxType, 111},
+					{common.Hash{0x02}, types.LegacyTxType, 222},
+				},
+				"B": {
+					{common.Hash{0x03}, types.LegacyTxType, 333},
+					{common.Hash{0x04}, types.LegacyTxType, 444},
+				},
+				"C": {
+					{common.Hash{0x01}, types.LegacyTxType, 111},
+					{common.Hash{0x04}, types.LegacyTxType, 444},
+				},
+			}),
+			// Announce existing and clashing hashes from existing peer. Clashes
+			// should not overwrite previous announcements.
+			doTxNotify{peer: "A", hashes: []common.Hash{{0x01}, {0x03}, {0x05}}, types: []byte{types.LegacyTxType, types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{999, 333, 555}},
+			isWaiting(map[string][]announce{
+				"A": {
+					{common.Hash{0x01}, types.LegacyTxType, 111},
+					{common.Hash{0x02}, types.LegacyTxType, 222},
+					{common.Hash{0x03}, types.LegacyTxType, 333},
+					{common.Hash{0x05}, types.LegacyTxType, 555},
+				},
+				"B": {
+					{common.Hash{0x03}, types.LegacyTxType, 333},
+					{common.Hash{0x04}, types.LegacyTxType, 444},
+				},
+				"C": {
+					{common.Hash{0x01}, types.LegacyTxType, 111},
+					{common.Hash{0x04}, types.LegacyTxType, 444},
+				},
+			}),
+			// Announce clashing hashes with conflicting metadata. Somebody will
+			// be in the wrong, but we don't know yet who.
+			doTxNotify{peer: "D", hashes: []common.Hash{{0x01}, {0x02}}, types: []byte{types.LegacyTxType, types.BlobTxType}, sizes: []uint32{999, 222}},
+			isWaiting(map[string][]announce{
+				"A": {
+					{common.Hash{0x01}, types.LegacyTxType, 111},
+					{common.Hash{0x02}, types.LegacyTxType, 222},
+					{common.Hash{0x03}, types.LegacyTxType, 333},
+					{common.Hash{0x05}, types.LegacyTxType, 555},
+				},
+				"B": {
+					{common.Hash{0x03}, types.LegacyTxType, 333},
+					{common.Hash{0x04}, types.LegacyTxType, 444},
+				},
+				"C": {
+					{common.Hash{0x01}, types.LegacyTxType, 111},
+					{common.Hash{0x04}, types.LegacyTxType, 444},
+				},
+				"D": {
+					{common.Hash{0x01}, types.LegacyTxType, 999},
+					{common.Hash{0x02}, types.BlobTxType, 222},
+				},
+			}),
+			isScheduled{tracking: nil, fetching: nil},
 
-			// // Wait for the arrival timeout which should move all expired items
-			// // from the wait list to the scheduler
-			// doWait{time: txArriveTimeout, step: true},
-			// isWaiting(nil),
-			// isScheduled{
-			// 	tracking: map[string][]announce{
-			// 		"A": {
-			// 			{common.Hash{0x01}, types.LegacyTxType, 111},
-			// 			{common.Hash{0x02}, types.LegacyTxType, 222},
-			// 			{common.Hash{0x03}, types.LegacyTxType, 333},
-			// 			{common.Hash{0x05}, types.LegacyTxType, 555},
-			// 		},
-			// 		"B": {
-			// 			{common.Hash{0x03}, types.LegacyTxType, 333},
-			// 			{common.Hash{0x04}, types.LegacyTxType, 444},
-			// 		},
-			// 		"C": {
-			// 			{common.Hash{0x01}, types.LegacyTxType, 111},
-			// 			{common.Hash{0x04}, types.LegacyTxType, 444},
-			// 		},
-			// 		"D": {
-			// 			{common.Hash{0x01}, types.LegacyTxType, 999},
-			// 			{common.Hash{0x02}, types.BlobTxType, 222},
-			// 		},
-			// 	},
-			// 	fetching: map[string][]common.Hash{ // Depends on deterministic test randomizer
-			// 		"A": {{0x03}, {0x05}},
-			// 		"C": {{0x01}, {0x04}},
-			// 		"D": {{0x02}},
-			// 	},
-			// },
-			// // Queue up a non-fetchable transaction and then trigger it with a new
-			// // peer (weird case to test 1 line in the fetcher)
-			// doTxNotify{peer: "C", hashes: []common.Hash{{0x06}, {0x07}}, types: []byte{types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{666, 777}},
-			// isWaiting(map[string][]announce{
-			// 	"C": {
-			// 		{common.Hash{0x06}, types.LegacyTxType, 666},
-			// 		{common.Hash{0x07}, types.LegacyTxType, 777},
-			// 	},
-			// }),
-			// doWait{time: txArriveTimeout, step: true},
-			// isScheduled{
-			// 	tracking: map[string][]announce{
-			// 		"A": {
-			// 			{common.Hash{0x01}, types.LegacyTxType, 111},
-			// 			{common.Hash{0x02}, types.LegacyTxType, 222},
-			// 			{common.Hash{0x03}, types.LegacyTxType, 333},
-			// 			{common.Hash{0x05}, types.LegacyTxType, 555},
-			// 		},
-			// 		"B": {
-			// 			{common.Hash{0x03}, types.LegacyTxType, 333},
-			// 			{common.Hash{0x04}, types.LegacyTxType, 444},
-			// 		},
-			// 		"C": {
-			// 			{common.Hash{0x01}, types.LegacyTxType, 111},
-			// 			{common.Hash{0x04}, types.LegacyTxType, 444},
-			// 			{common.Hash{0x06}, types.LegacyTxType, 666},
-			// 			{common.Hash{0x07}, types.LegacyTxType, 777},
-			// 		},
-			// 		"D": {
-			// 			{common.Hash{0x01}, types.LegacyTxType, 999},
-			// 			{common.Hash{0x02}, types.BlobTxType, 222},
-			// 		},
-			// 	},
-			// 	fetching: map[string][]common.Hash{
-			// 		"A": {{0x03}, {0x05}},
-			// 		"C": {{0x01}, {0x04}},
-			// 		"D": {{0x02}},
-			// 	},
-			// },
-			// doTxNotify{peer: "E", hashes: []common.Hash{{0x06}, {0x07}}, types: []byte{types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{666, 777}},
-			// isScheduled{
-			// 	tracking: map[string][]announce{
-			// 		"A": {
-			// 			{common.Hash{0x01}, types.LegacyTxType, 111},
-			// 			{common.Hash{0x02}, types.LegacyTxType, 222},
-			// 			{common.Hash{0x03}, types.LegacyTxType, 333},
-			// 			{common.Hash{0x05}, types.LegacyTxType, 555},
-			// 		},
-			// 		"B": {
-			// 			{common.Hash{0x03}, types.LegacyTxType, 333},
-			// 			{common.Hash{0x04}, types.LegacyTxType, 444},
-			// 		},
-			// 		"C": {
-			// 			{common.Hash{0x01}, types.LegacyTxType, 111},
-			// 			{common.Hash{0x04}, types.LegacyTxType, 444},
-			// 			{common.Hash{0x06}, types.LegacyTxType, 666},
-			// 			{common.Hash{0x07}, types.LegacyTxType, 777},
-			// 		},
-			// 		"D": {
-			// 			{common.Hash{0x01}, types.LegacyTxType, 999},
-			// 			{common.Hash{0x02}, types.BlobTxType, 222},
-			// 		},
-			// 		"E": {
-			// 			{common.Hash{0x06}, types.LegacyTxType, 666},
-			// 			{common.Hash{0x07}, types.LegacyTxType, 777},
-			// 		},
-			// 	},
-			// 	fetching: map[string][]common.Hash{
-			// 		"A": {{0x03}, {0x05}},
-			// 		"C": {{0x01}, {0x04}},
-			// 		"D": {{0x02}},
-			// 		"E": {{0x06}, {0x07}},
-			// 	},
-			// },
+			// Wait for the arrival timeout which should move all expired items
+			// from the wait list to the scheduler
+			doWait{time: txArriveTimeout, step: true},
+			isWaiting(nil),
+			isScheduled{
+				tracking: map[string][]announce{
+					"A": {
+						{common.Hash{0x01}, types.LegacyTxType, 111},
+						{common.Hash{0x02}, types.LegacyTxType, 222},
+						{common.Hash{0x03}, types.LegacyTxType, 333},
+						{common.Hash{0x05}, types.LegacyTxType, 555},
+					},
+					"B": {
+						{common.Hash{0x03}, types.LegacyTxType, 333},
+						{common.Hash{0x04}, types.LegacyTxType, 444},
+					},
+					"C": {
+						{common.Hash{0x01}, types.LegacyTxType, 111},
+						{common.Hash{0x04}, types.LegacyTxType, 444},
+					},
+					"D": {
+						{common.Hash{0x01}, types.LegacyTxType, 999},
+						{common.Hash{0x02}, types.BlobTxType, 222},
+					},
+				},
+				fetching: map[string][]common.Hash{ // Depends on deterministic test randomizer
+					"A": {{0x03}, {0x05}},
+					"C": {{0x01}, {0x04}},
+					"D": {{0x02}},
+				},
+			},
+			// Queue up a non-fetchable transaction and then trigger it with a new
+			// peer (weird case to test 1 line in the fetcher)
+			doTxNotify{peer: "C", hashes: []common.Hash{{0x06}, {0x07}}, types: []byte{types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{666, 777}},
+			isWaiting(map[string][]announce{
+				"C": {
+					{common.Hash{0x06}, types.LegacyTxType, 666},
+					{common.Hash{0x07}, types.LegacyTxType, 777},
+				},
+			}),
+			doWait{time: txArriveTimeout, step: true},
+			isScheduled{
+				tracking: map[string][]announce{
+					"A": {
+						{common.Hash{0x01}, types.LegacyTxType, 111},
+						{common.Hash{0x02}, types.LegacyTxType, 222},
+						{common.Hash{0x03}, types.LegacyTxType, 333},
+						{common.Hash{0x05}, types.LegacyTxType, 555},
+					},
+					"B": {
+						{common.Hash{0x03}, types.LegacyTxType, 333},
+						{common.Hash{0x04}, types.LegacyTxType, 444},
+					},
+					"C": {
+						{common.Hash{0x01}, types.LegacyTxType, 111},
+						{common.Hash{0x04}, types.LegacyTxType, 444},
+						{common.Hash{0x06}, types.LegacyTxType, 666},
+						{common.Hash{0x07}, types.LegacyTxType, 777},
+					},
+					"D": {
+						{common.Hash{0x01}, types.LegacyTxType, 999},
+						{common.Hash{0x02}, types.BlobTxType, 222},
+					},
+				},
+				fetching: map[string][]common.Hash{
+					"A": {{0x03}, {0x05}},
+					"C": {{0x01}, {0x04}},
+					"D": {{0x02}},
+				},
+			},
+			doTxNotify{peer: "E", hashes: []common.Hash{{0x06}, {0x07}}, types: []byte{types.LegacyTxType, types.LegacyTxType}, sizes: []uint32{666, 777}},
+			isScheduled{
+				tracking: map[string][]announce{
+					"A": {
+						{common.Hash{0x01}, types.LegacyTxType, 111},
+						{common.Hash{0x02}, types.LegacyTxType, 222},
+						{common.Hash{0x03}, types.LegacyTxType, 333},
+						{common.Hash{0x05}, types.LegacyTxType, 555},
+					},
+					"B": {
+						{common.Hash{0x03}, types.LegacyTxType, 333},
+						{common.Hash{0x04}, types.LegacyTxType, 444},
+					},
+					"C": {
+						{common.Hash{0x01}, types.LegacyTxType, 111},
+						{common.Hash{0x04}, types.LegacyTxType, 444},
+						{common.Hash{0x06}, types.LegacyTxType, 666},
+						{common.Hash{0x07}, types.LegacyTxType, 777},
+					},
+					"D": {
+						{common.Hash{0x01}, types.LegacyTxType, 999},
+						{common.Hash{0x02}, types.BlobTxType, 222},
+					},
+					"E": {
+						{common.Hash{0x06}, types.LegacyTxType, 666},
+						{common.Hash{0x07}, types.LegacyTxType, 777},
+					},
+				},
+				fetching: map[string][]common.Hash{
+					"A": {{0x03}, {0x05}},
+					"C": {{0x01}, {0x04}},
+					"D": {{0x02}},
+					"E": {{0x06}, {0x07}},
+				},
+			},
 		},
 	})
 }
