@@ -346,10 +346,13 @@ type BlobPool struct {
 	stored uint64         // Useful data size of all transactions on disk
 	limbo  *limbo         // Persistent data store for the non-finalized blobs
 
-	queue            map[common.Hash]*types.Transaction
+	queue            map[common.Hash]*types.Transaction        // buffer
 	indexQueue       map[common.Address][]*blobTxMeta          // tx hashes in queue per address, sorted by nonce
 	spentQueue       map[common.Address]*uint256.Int           // Expenditure tracking for accounts, only for buffered txs
 	replacementQueue map[common.Address]map[uint64]*blobTxMeta // Replacement queue for pooled transactions
+
+	cellQueue    map[common.Hash][]kzg4844.Cell // cell buffer
+	custodyQueue map[common.Hash]*types.CustodyBitmap
 
 	signer types.Signer // Transaction signer to use for sender recovery
 	chain  BlockChain   // Chain object to access the state through
@@ -1683,13 +1686,17 @@ func (p *BlobPool) Add(txs []*types.Transaction, sync bool) []error {
 }
 
 func (p *BlobPool) AddPayload(txs []common.Hash, cells [][]kzg4844.Cell, custody *types.CustodyBitmap) []error {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+
 	var (
 		errs = make([]error, len(txs))
 		adds = make([]*types.Transaction, 0, len(txs))
 	)
 	for i, hash := range txs {
 		if p.queue[hash] == nil {
-			errs[i] = errors.New("Add payload of unknown transaction")
+			p.cellQueue[hash] = cells[i]
+			p.custodyQueue[hash] = custody
 			continue
 		}
 
@@ -1724,7 +1731,7 @@ func (p *BlobPool) AddPayload(txs []common.Hash, cells [][]kzg4844.Cell, custody
 			}
 		}
 
-		errs[i] = p.add(p.queue[hash].WithoutBlob(), &cellSidecar)
+		errs[i] = p.addLocked(p.queue[hash].WithoutBlob(), &cellSidecar)
 		if errs[i] == nil {
 			adds = append(adds, p.queue[hash].WithoutBlobTxSidecar())
 		}
@@ -1764,6 +1771,48 @@ func (p *BlobPool) AddPayload(txs []common.Hash, cells [][]kzg4844.Cell, custody
 }
 
 func (p *BlobPool) addBuffer(tx *types.Transaction) (err error) {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+
+	if cells, ok := p.cellQueue[tx.Hash()]; ok {
+		sidecar := tx.BlobTxSidecar()
+
+		var cellSidecar types.BlobTxCellSidecar
+		if len(cells) >= kzg4844.DataPerBlob {
+			blob, err := kzg4844.RecoverBlobs(cells, p.custodyQueue[tx.Hash()].Indices())
+			if err != nil {
+				return err
+			}
+			extendedCells, err := kzg4844.ComputeCells(blob)
+			if err != nil {
+				return err
+			}
+			cellSidecar = types.BlobTxCellSidecar{
+				Version:     sidecar.Version,
+				Cells:       extendedCells,
+				Commitments: sidecar.Commitments,
+				Proofs:      sidecar.Proofs,
+				Custody:     *types.CustodyBitmapAll,
+			}
+		} else {
+			cellSidecar = types.BlobTxCellSidecar{
+				Version:     sidecar.Version,
+				Cells:       cells,
+				Commitments: sidecar.Commitments,
+				Proofs:      sidecar.Proofs,
+				Custody:     *p.custodyQueue[tx.Hash()],
+			}
+		}
+
+		err := p.addLocked(tx.WithoutBlob(), &cellSidecar)
+		if err == nil {
+			delete(p.cellQueue, tx.Hash())
+			delete(p.custodyQueue, tx.Hash())
+			p.discoverFeed.Send(core.NewTxsEvent{Txs: []*types.Transaction{tx}})
+			p.insertFeed.Send(core.NewTxsEvent{Txs: []*types.Transaction{tx}})
+		}
+	}
+
 	if err := p.validateTx(tx, true); err != nil {
 		return err
 	}
@@ -1853,6 +1902,10 @@ func (p *BlobPool) add(tx *types.Transaction, cellSidecar *types.BlobTxCellSidec
 		addtimeHist.Update(time.Since(start).Nanoseconds())
 	}(time.Now())
 
+	return p.addLocked(tx, cellSidecar)
+}
+
+func (p *BlobPool) addLocked(tx *types.Transaction, cellSidecar *types.BlobTxCellSidecar) (err error) {
 	// Ensure the transaction is valid from all perspectives
 	// If the tx and cells are delivered in a way that minizes nonce gap, vaidation should work when buffer == false
 	if err := p.validateTx(tx, false); err != nil {
