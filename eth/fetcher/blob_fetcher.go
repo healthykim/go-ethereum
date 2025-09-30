@@ -10,6 +10,27 @@ import (
 	"github.com/ethereum/go-ethereum/common/mclock"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
+	"github.com/ethereum/go-ethereum/metrics"
+)
+
+var (
+	blobAnnounceInMeter  = metrics.NewRegisteredMeter("eth/fetcher/blobFetcher/blob/announces/in", nil)
+	blobAnnounceDOSMeter = metrics.NewRegisteredMeter("eth/fetcher/blobFetcher/blob/announces/dos", nil)
+
+	blobRequestOutMeter     = metrics.NewRegisteredMeter("eth/fetcher/blobFetcher/blob/request/out", nil)
+	blobRequestFailMeter    = metrics.NewRegisteredMeter("eth/fetcher/blobFetcher/blob/request/fail", nil)
+	blobRequestDoneMeter    = metrics.NewRegisteredMeter("eth/fetcher/blobFetcher/blob/request/done", nil)
+	blobRequestTimeoutMeter = metrics.NewRegisteredMeter("eth/fetcher/blobFetcher/blob/request/timeout", nil)
+
+	blobReplyInMeter     = metrics.NewRegisteredMeter("eth/fetcher/blobFetcher/blob/replies/in", nil)
+	blobReplyRejectMeter = metrics.NewRegisteredMeter("eth/fetcher/blobFetcher/blob/replies/reject", nil)
+
+	blobFetcherWaitingPeers   = metrics.NewRegisteredGauge("eth/fetcher/blobFetcher/blob/waiting/peers", nil)  // availability waiting
+	blobFetcherWaitingHashes  = metrics.NewRegisteredGauge("eth/fetcher/blobFetcher/blob/waiting/hashes", nil) // availability waiting
+	blobFetcherQueueingPeers  = metrics.NewRegisteredGauge("eth/fetcher/blobFetcher/blob/queueing/peers", nil) // queued + fetching txs
+	blobFetcherQueueingHashes = metrics.NewRegisteredGauge("eth/fetcher/blobFetcher/blob/queueing/hashes", nil)
+	blobFetcherFetchingPeers  = metrics.NewRegisteredGauge("eth/fetcher/blobFetcher/blob/fetching/peers", nil) // fetching txs
+	blobFetcherFetchingHashes = metrics.NewRegisteredGauge("eth/fetcher/blobFetcher/blob/fetching/hashes", nil)
 )
 
 type random interface {
@@ -147,6 +168,8 @@ func NewBlobFetcher(
 
 // Notify is called when a Type 3 transaction is observed on the network. (TransactionPacket / NewPooledTransactionHashesPacket)
 func (f *BlobFetcher) Notify(peer string, txs []common.Hash, cells types.CustodyBitmap) error {
+	blobAnnounceInMeter.Mark(int64(len(txs)))
+
 	// Validation regarding tx (e.g. hasTx etc) will be performed in txFetcher
 	blobAnnounce := &blobTxAnnounce{origin: peer, txs: txs, cells: cells}
 	select {
@@ -165,6 +188,9 @@ func (f *BlobFetcher) Enqueue(peer string, hashes []common.Hash, cells [][]kzg48
 		validatedCells = make([][]kzg4844.Cell, 0)
 	)
 
+	blobReplyInMeter.Mark(int64(len(hashes)))
+
+	reject := 0
 	for i := 0; i < len(hashes); i += addTxsBatchSize {
 		end := i + addTxsBatchSize
 		if end > len(hashes) {
@@ -173,13 +199,16 @@ func (f *BlobFetcher) Enqueue(peer string, hashes []common.Hash, cells [][]kzg48
 		hashBatch := hashes[i:end]
 		cellBatch := cells[i:end]
 		for j, err := range f.validateCells(hashBatch, cellBatch, &cellBitmap) {
-			if err == nil {
+			if err != nil {
+				reject++
+			} else {
 				validatedTxs = append(validatedTxs, hashBatch[j])
 				validatedCells = append(validatedCells, cellBatch[j])
 			}
 			// Currently we silently drop invalid items and continue processing -> should we disconnect?
 		}
 	}
+	blobReplyRejectMeter.Mark(int64(reject))
 
 	// Process valid data if any exists
 	if len(validatedTxs) > 0 {
@@ -228,6 +257,7 @@ func (f *BlobFetcher) loop() {
 			// This prevents a peer from dominating the queue with txs without responding to the request
 			used := len(f.waitslots[ann.origin]) + len(f.announces[ann.origin])
 			if used >= maxPayloadAnnounces {
+				blobAnnounceDOSMeter.Mark(int64(len(ann.txs)))
 				// Already full
 				break
 			}
@@ -236,6 +266,7 @@ func (f *BlobFetcher) loop() {
 			if want >= maxPayloadAnnounces {
 				// drop part of announcements
 				ann.txs = ann.txs[:maxPayloadAnnounces-used]
+				blobAnnounceDOSMeter.Mark(int64(want - maxPayloadAnnounces))
 			}
 
 			var (
@@ -385,6 +416,7 @@ func (f *BlobFetcher) loop() {
 				newRequests := make([]*cellRequest, 0)
 				for _, req := range requests {
 					if time.Duration(f.clock.Now()-req.time)+txGatherSlack > blobFetchTimeout {
+						blobRequestTimeoutMeter.Mark(int64(len(req.txs)))
 						// Reschedule all timeout cells to alternate peers
 						for _, hash := range req.txs {
 							// Do not request the same tx from this peer
@@ -442,7 +474,7 @@ func (f *BlobFetcher) loop() {
 				// peer sent cells not requested. ignore
 				break
 			}
-
+			blobRequestDoneMeter.Mark(int64(len(delivery.txs)))
 			for i, hash := range delivery.txs {
 				if !slices.Contains(request.txs, hash) {
 					// Unexpected hash, ignore
@@ -589,6 +621,22 @@ func (f *BlobFetcher) loop() {
 		case <-f.quit:
 			return
 		}
+
+		blobFetcherWaitingPeers.Update(int64(len(f.waitslots)))
+		blobFetcherWaitingHashes.Update(int64(len(f.waitlist)))
+		blobFetcherQueueingPeers.Update(int64(len(f.announces) - len(f.requests)))
+		announced := make(map[common.Hash]struct{})
+		for _, hashes := range f.announces {
+			for hash := range hashes {
+				if _, ok := announced[hash]; !ok {
+					announced[hash] = struct{}{}
+				}
+			}
+		}
+		blobFetcherQueueingHashes.Update(int64(len(announced)))
+		blobFetcherFetchingPeers.Update(int64(len(f.requests)))
+		blobFetcherFetchingHashes.Update(int64(len(f.fetches)))
+
 		// Loop did something, ping the step notifier if needed (tests)
 		if f.step != nil {
 			f.step <- struct{}{}
@@ -703,10 +751,12 @@ func (f *BlobFetcher) scheduleFetches(timer *mclock.Timer, timeout chan struct{}
 				f.alternates[hash][peer] = cells
 			}
 
+			// todo need different threshold
 			return len(hashes) < maxPayloadRetrievals
 		})
 		// If any hashes were allocated, request them from the peer
 		if len(hashes) > 0 {
+			blobRequestOutMeter.Mark(int64(len(hashes)))
 			// Group hashes by custody bitmap
 			requestByCustody := make(map[string]*cellRequest)
 
@@ -733,6 +783,7 @@ func (f *BlobFetcher) scheduleFetches(timer *mclock.Timer, timeout chan struct{}
 			go func(peer string, request []*cellRequest) {
 				for _, req := range request {
 					if err := f.fetchPayloads(peer, req.txs, req.cells); err != nil {
+						blobRequestFailMeter.Mark(int64(len(hashes)))
 						f.Drop(peer)
 						break
 					}
