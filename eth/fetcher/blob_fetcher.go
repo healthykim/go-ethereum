@@ -508,7 +508,9 @@ func (f *BlobFetcher) loop() {
 			}
 			// Update mempool status for arrived hashes
 			// Record errors if needed
-			f.addPayload(addedHashes, addedCells, delivery.cellBitmap)
+			if len(addedHashes) > 0 {
+				f.addPayload(addedHashes, addedCells, delivery.cellBitmap)
+			}
 
 			// Remove the request
 			f.requests[delivery.origin][requestId] = f.requests[delivery.origin][len(f.requests[delivery.origin])-1]
