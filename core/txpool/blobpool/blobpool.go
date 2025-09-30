@@ -1703,6 +1703,10 @@ func (p *BlobPool) AddPayload(txs []common.Hash, cells [][]kzg4844.Cell, custody
 				continue
 			}
 			extendedCells, err := kzg4844.ComputeCells(blob)
+			if err != nil {
+				errs[i] = err
+				continue
+			}
 			cellSidecar = types.BlobTxCellSidecar{
 				Version:     sidecar.Version,
 				Cells:       extendedCells,

@@ -2130,7 +2130,7 @@ func TestGetCells(t *testing.T) {
 			cells, err := pool.GetCells(tt.hash, tt.mask)
 
 			if err != nil && !tt.shouldFail {
-				t.Errorf("expected to sucess, got %v", err)
+				t.Errorf("expected to success, got %v", err)
 			}
 			if err == nil && tt.shouldFail {
 				t.Errorf("expected to fail, got %v", err)

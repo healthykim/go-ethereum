@@ -92,7 +92,6 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 					if len(tx.BlobTxSidecar().Blobs) != 0 {
 						return fmt.Errorf("not allowed to response full-blob transaction under eth71, received: %d", len(tx.BlobTxSidecar().Blobs))
 					}
-
 				} else {
 					if tx.BlobTxSidecar() == nil {
 						return errors.New("received sidecar-less blob transaction")
