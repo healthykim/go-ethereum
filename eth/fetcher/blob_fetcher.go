@@ -10,27 +10,6 @@ import (
 	"github.com/ethereum/go-ethereum/common/mclock"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
-	"github.com/ethereum/go-ethereum/metrics"
-)
-
-var (
-	blobAnnounceInMeter  = metrics.NewRegisteredMeter("eth/fetcher/blobFetcher/blob/announces/in", nil)
-	blobAnnounceDOSMeter = metrics.NewRegisteredMeter("eth/fetcher/blobFetcher/blob/announces/dos", nil)
-
-	blobRequestOutMeter     = metrics.NewRegisteredMeter("eth/fetcher/blobFetcher/blob/request/out", nil)
-	blobRequestFailMeter    = metrics.NewRegisteredMeter("eth/fetcher/blobFetcher/blob/request/fail", nil)
-	blobRequestDoneMeter    = metrics.NewRegisteredMeter("eth/fetcher/blobFetcher/blob/request/done", nil)
-	blobRequestTimeoutMeter = metrics.NewRegisteredMeter("eth/fetcher/blobFetcher/blob/request/timeout", nil)
-
-	blobReplyInMeter     = metrics.NewRegisteredMeter("eth/fetcher/blobFetcher/blob/replies/in", nil)
-	blobReplyRejectMeter = metrics.NewRegisteredMeter("eth/fetcher/blobFetcher/blob/replies/reject", nil)
-
-	blobFetcherWaitingPeers   = metrics.NewRegisteredGauge("eth/fetcher/blobFetcher/blob/waiting/peers", nil)  // availability waiting
-	blobFetcherWaitingHashes  = metrics.NewRegisteredGauge("eth/fetcher/blobFetcher/blob/waiting/hashes", nil) // availability waiting
-	blobFetcherQueueingPeers  = metrics.NewRegisteredGauge("eth/fetcher/blobFetcher/blob/queueing/peers", nil) // queued + fetching txs
-	blobFetcherQueueingHashes = metrics.NewRegisteredGauge("eth/fetcher/blobFetcher/blob/queueing/hashes", nil)
-	blobFetcherFetchingPeers  = metrics.NewRegisteredGauge("eth/fetcher/blobFetcher/blob/fetching/peers", nil) // fetching txs
-	blobFetcherFetchingHashes = metrics.NewRegisteredGauge("eth/fetcher/blobFetcher/blob/fetching/hashes", nil)
 )
 
 type random interface {
