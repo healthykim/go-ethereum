@@ -26,11 +26,11 @@ var blobFetchTimeout = 5 * time.Second
 
 // todo blob count should be delivered in announce.
 const (
-	availabilityThreshold         = 2
-	maxPayloadRetrievals          = 128
-	maxPayloadAnnounces           = 4096
-	MAX_CELLS_PER_PARTIAL_REQUEST = 8
-	blobAvailabilityTimeout       = 500 * time.Millisecond
+	availabilityThreshold     = 2
+	maxPayloadRetrievals      = 128
+	maxPayloadAnnounces       = 4096
+	maxCellsPerPartialRequest = 8
+	blobAvailabilityTimeout   = 500 * time.Millisecond
 )
 
 type blobTxAnnounce struct {
@@ -673,6 +673,9 @@ func (f *BlobFetcher) scheduleFetches(timer *mclock.Timer, timeout chan struct{}
 				difference = cells
 			} else {
 				difference = cells.Difference(f.fetches[hash].fetching)
+			}
+			if _, ok := f.partial[hash]; ok {
+				difference = difference.Truncate(maxCellsPerPartialRequest)
 			}
 
 			// Mark fetching for differences

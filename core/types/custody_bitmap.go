@@ -181,3 +181,21 @@ func (b CustodyBitmap) AllSet() bool {
 
 	return true
 }
+
+func (b *CustodyBitmap) Truncate(len uint) *CustodyBitmap {
+	totalBytes := kzg4844.CellsPerBlob / 8
+
+	var out CustodyBitmap
+	count := 0
+	for byteIdx := 0; byteIdx < totalBytes; byteIdx++ {
+		for bitIdx := 0; bitIdx < 8; bitIdx++ {
+			if (b[byteIdx] & (1 << bitIdx)) != 0 {
+				if count < int(len) {
+					out[byteIdx] |= (1 << bitIdx)
+					count++
+				}
+			}
+		}
+	}
+	return &out
+}

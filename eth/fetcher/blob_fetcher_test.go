@@ -65,7 +65,8 @@ var (
 		makeTestCellSidecar(4),
 	}
 
-	custody = types.NewCustodyBitmap([]uint64{0, 1, 2, 3, 4, 5, 6, 7})
+	custody  = types.NewCustodyBitmap([]uint64{0, 1, 2, 3, 4, 5, 6, 7})
+	custody2 = types.NewCustodyBitmap([]uint64{8, 9, 10, 11, 12, 13, 14, 15})
 
 	fullCustody      = *types.CustodyBitmapAll
 	halfCustody      = *types.CustodyBitmapData
@@ -683,6 +684,50 @@ func TestBlobFetcherFetchTimeout(t *testing.T) {
 			doWait{time: testBlobFetchTimeout, step: true},
 			isBlobScheduled{announces: nil, fetching: nil},
 			isFetching{hashes: nil},
+		},
+	})
+}
+
+// TestblobFetcherCollective tests supernode case
+func TestBlobFetcherCollective(t *testing.T) {
+	testBlobFetcher(t, blobFetcherTest{
+		init: func() *BlobFetcher {
+			return NewBlobFetcher(
+				func(txs []common.Hash, _ [][]kzg4844.Cell, _ *types.CustodyBitmap) []error {
+					return make([]error, len(txs))
+				},
+				func(txs []common.Hash, _ [][]kzg4844.Cell, _ *types.CustodyBitmap) []error {
+					return make([]error, len(txs))
+				},
+				func(string, []common.Hash, *types.CustodyBitmap) error { return nil },
+				func(string) {},
+				&fullCustody,
+				&mockRand{value: 20}, // partial fetch
+			)
+		},
+		steps: []interface{}{
+			// Full announce by two peers (A, B) -> schedule fetch
+			doBlobNotify{peer: "A", hashes: []common.Hash{testBlobTxHashes[0]}, custody: fullCustody},
+			doBlobNotify{peer: "B", hashes: []common.Hash{testBlobTxHashes[0]}, custody: fullCustody},
+			isWaitingAvailability(nil),
+			isBlobScheduled{
+				announces: map[string][]blobAnnounce{
+					"A": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+					"B": {{hash: testBlobTxHashes[0], custody: fullCustody}},
+				},
+				fetching: map[string][]blobAnnounce{
+					"A": {{hash: testBlobTxHashes[0], custody: custody}},
+					"B": {{hash: testBlobTxHashes[0], custody: custody2}},
+				},
+			},
+			isFetching{
+				hashes: map[common.Hash]fetchInfo{
+					testBlobTxHashes[0]: {
+						fetching: custody.Union(&custody2),
+						fetched:  []uint64{},
+					},
+				},
+			},
 		},
 	})
 }
