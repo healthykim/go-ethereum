@@ -16,14 +16,6 @@ type random interface {
 	Intn(n int) int
 }
 
-// BlobFetcher fetches blobs of new type-3 transactions with probability p,
-// and for the remaining (1-p) transactions, it performs availability checks.
-// For availability checks, it fetches cells from each blob in the transaction
-// according to the custody cell indices provided by the consensus client
-// connected to this execution client.
-
-var blobFetchTimeout = 5 * time.Second
-
 // todo blob count should be delivered in announce.
 const (
 	availabilityThreshold     = 2
@@ -31,39 +23,14 @@ const (
 	maxPayloadAnnounces       = 4096
 	maxCellsPerPartialRequest = 8
 	blobAvailabilityTimeout   = 500 * time.Millisecond
+	blobFetchTimeout          = 5 * time.Second
 )
 
-type blobTxAnnounce struct {
-	origin string              // Identifier of the peer that sent the announcement
-	txs    []common.Hash       // Hashes of transactions announced
-	cells  types.CustodyBitmap // Custody information of transactions being announced
-}
-
-type cellRequest struct {
-	txs   []common.Hash        // Transactions that have been requested for their cells
-	cells *types.CustodyBitmap // Requested cell indices
-	time  mclock.AbsTime       // Timestamp when the request was made
-}
-
-type payloadDelivery struct {
-	origin     string        // Peer from which the payloads were delivered
-	txs        []common.Hash // Hashes of transactions that were delivered
-	cells      [][]kzg4844.Cell
-	cellBitmap *types.CustodyBitmap
-}
-
-type cellWithSeq struct {
-	seq   uint64
-	cells *types.CustodyBitmap
-}
-
-type fetchStatus struct {
-	fetching *types.CustodyBitmap // To avoid fetching cells which had already been fetched / currently being fetched
-	fetched  []uint64             // To sort cells
-	cells    []kzg4844.Cell
-}
-
-// BlobFetcher is responsible for managing type 3 transactions based on peer announcements.
+// BlobFetcher fetches blobs of new type-3 transactions with probability p,
+// and for the remaining (1-p) transactions, it performs availability checks.
+// For availability checks, it fetches cells from each blob in the transaction
+// according to the custody cell indices provided by the consensus client
+// connected to this execution client.
 //
 // BlobFetcher manages three buffers:
 //   - Transactions not to be fetched are moved to "waitlist"
@@ -86,10 +53,7 @@ type BlobFetcher struct {
 	partial map[common.Hash]struct{}
 
 	// Buffer 1: Set of blob txs whose blob data is waiting for availability confirmation (not pull decision)
-	waitlist  map[common.Hash]map[string]struct{} // Peer set that announced blob availability
-	waittime  map[common.Hash]mclock.AbsTime      // Timestamp when added to waitlist
-	waitslots map[string]map[common.Hash]struct{} // Waiting announcements grouped by peer (DoS protection)
-	// waitSlots should also include announcements with partial cells
+	wait *waitBuffer
 
 	// Buffer 2: Transactions queued for fetching (pull decision + not pull decision)
 	// "announces" is shared with stage 3, for DoS protection
@@ -128,9 +92,7 @@ func NewBlobFetcher(
 		quit:          make(chan struct{}),
 		full:          make(map[common.Hash]struct{}),
 		partial:       make(map[common.Hash]struct{}),
-		waitlist:      make(map[common.Hash]map[string]struct{}),
-		waittime:      make(map[common.Hash]mclock.AbsTime),
-		waitslots:     make(map[string]map[common.Hash]struct{}),
+		wait:          NewWaitBuffer(),
 		announcetime:  make(map[common.Hash]mclock.AbsTime),
 		announces:     make(map[string]map[common.Hash]*cellWithSeq),
 		fetches:       make(map[common.Hash]*fetchStatus),
@@ -145,6 +107,12 @@ func NewBlobFetcher(
 		realTime:      time.Now,
 		rand:          rand,
 	}
+}
+
+// todo
+func (f *BlobFetcher) setClock(clock mclock.Clock) {
+	f.wait.clock = clock
+	f.clock = clock
 }
 
 // Notify is called when a Type 3 transaction is observed on the network. (TransactionPacket / NewPooledTransactionHashesPacket)
@@ -236,7 +204,7 @@ func (f *BlobFetcher) loop() {
 		case ann := <-f.notify:
 			// Drop part of the announcements if too many have accumulated from that peer
 			// This prevents a peer from dominating the queue with txs without responding to the request
-			used := len(f.waitslots[ann.origin]) + len(f.announces[ann.origin])
+			used := f.wait.countEntry(ann.origin) + len(f.announces[ann.origin])
 			if used >= maxPayloadAnnounces {
 				blobAnnounceDOSMeter.Mark(int64(len(ann.txs)))
 				// Already full
@@ -251,7 +219,7 @@ func (f *BlobFetcher) loop() {
 			}
 
 			var (
-				idleWait   = len(f.waittime) == 0
+				idleWait   = f.wait.idle()
 				_, oldPeer = f.announces[ann.origin]
 				nextSeq    = func() uint64 {
 					seq := f.txSeq
@@ -268,60 +236,18 @@ func (f *BlobFetcher) loop() {
 					// there is no reason to reannounce cells, and it has to be prevented.
 					continue
 				}
-				// Decide full or partial request
-				if _, ok := f.full[hash]; !ok {
-					if _, ok := f.partial[hash]; !ok {
-						// Not decided yet
-						var randomValue int
-						if f.rand == nil {
-							randomValue = rand.Intn(100)
-						} else {
-							randomValue = f.rand.Intn(100)
-						}
-						if randomValue < 15 {
-							f.full[hash] = struct{}{}
-						} else {
-							f.partial[hash] = struct{}{}
-							// Register for availability check
-							f.waitlist[hash] = make(map[string]struct{})
-							f.waittime[hash] = f.clock.Now()
-						}
-					}
-				}
-				if _, ok := f.full[hash]; ok {
-					// 1) Decided to send full request of the tx
-					if !ann.cells.AllSet() {
-						continue
-					}
-					if f.announces[ann.origin] == nil {
-						f.announces[ann.origin] = make(map[common.Hash]*cellWithSeq)
-					}
-					f.announces[ann.origin][hash] = &cellWithSeq{
-						cells: types.CustodyBitmapData,
-						seq:   nextSeq(),
-					}
-					f.announcetime[hash] = f.clock.Now()
-					reschedule[ann.origin] = struct{}{}
-					continue
-				}
-				if _, ok := f.partial[hash]; ok {
-					// 2) Decided to send partial request of the tx
-					if f.waitlist[hash] != nil {
+				if ok, new := f.isPartial(hash); ok {
+					// Decided to send partial request of the tx
+					if new || f.wait.isWaiting(hash) {
 						if !ann.cells.AllSet() {
+							delete(f.partial, hash) // clean up
 							continue
 						}
 						// Transaction is at the stage of availability check
 						// Add the peer to the peer list with full availability (waitlist)
-						f.waitlist[hash][ann.origin] = struct{}{}
-						if waitslots := f.waitslots[ann.origin]; waitslots != nil {
-							waitslots[hash] = struct{}{}
-						} else {
-							f.waitslots[ann.origin] = map[common.Hash]struct{}{
-								hash: {},
-							}
-						}
-						if len(f.waitlist[hash]) >= availabilityThreshold {
-							for peer := range f.waitlist[hash] {
+						f.wait.add(ann.origin, hash)
+						if f.wait.removable(hash) {
+							for peer := range f.wait.waitlist[hash] { // todo
 								if f.announces[peer] == nil {
 									f.announces[peer] = make(map[common.Hash]*cellWithSeq)
 								}
@@ -330,15 +256,10 @@ func (f *BlobFetcher) loop() {
 									seq:   nextSeq(),
 								}
 								f.announcetime[hash] = f.clock.Now()
-								delete(f.waitslots[peer], hash)
-								if len(f.waitslots[peer]) == 0 {
-									delete(f.waitslots, peer)
-								}
 								reschedule[peer] = struct{}{}
 							}
-							blobFetcherWaitTime.Update(f.clock.Now().Sub(f.waittime[hash]).Milliseconds())
-							delete(f.waitlist, hash)
-							delete(f.waittime, hash)
+							f.wait.removeTx(hash)
+							blobFetcherWaitTime.Update(f.clock.Now().Sub(f.wait.waittime[hash]).Milliseconds()) // todo
 						}
 						continue
 					}
@@ -355,17 +276,32 @@ func (f *BlobFetcher) loop() {
 						seq:   nextSeq(),
 					}
 					reschedule[ann.origin] = struct{}{}
+				} else {
+					// 1) Decided to send full request of the tx
+					if !ann.cells.AllSet() {
+						continue
+					}
+					if f.announces[ann.origin] == nil {
+						f.announces[ann.origin] = make(map[common.Hash]*cellWithSeq)
+					}
+					f.announces[ann.origin][hash] = &cellWithSeq{
+						cells: types.CustodyBitmapData,
+						seq:   nextSeq(),
+					}
+					f.announcetime[hash] = f.clock.Now()
+					reschedule[ann.origin] = struct{}{}
+					continue
 				}
 			}
 
 			// If a new item was added to the waitlist, schedule its timeout
-			if idleWait && len(f.waittime) > 0 {
+			if idleWait && !f.wait.idle() {
 				f.rescheduleWait(waitTimer, waitTrigger)
 			}
 
 			// If this is a new peer and that peer sent transaction with payload flag,
 			// schedule transaction fetches from it
-			//todo
+			//todo i forgot why i added this reschedule list;;;
 			if !oldPeer && len(f.announces[ann.origin]) > 0 {
 				f.scheduleFetches(timeoutTimer, timeoutTrigger, reschedule)
 			}
@@ -374,22 +310,9 @@ func (f *BlobFetcher) loop() {
 			// At least one transaction's waiting time ran out, pop all expired ones
 			// and update the blobpool according to availability
 			// Availability failure case
-			for hash, instance := range f.waittime {
-				if time.Duration(f.clock.Now()-instance)+txGatherSlack > blobAvailabilityTimeout {
-					// Check if enough peers have announced availability
-					for peer := range f.waitlist[hash] {
-						delete(f.waitslots[peer], hash)
-						if len(f.waitslots[peer]) == 0 {
-							delete(f.waitslots, peer)
-						}
-					}
-					delete(f.waittime, hash)
-					delete(f.waitlist, hash)
-				}
-			}
-
+			f.wait.timeout()
 			// If transactions are still waiting for availability, reschedule the wait timer
-			if len(f.waittime) > 0 {
+			if !f.wait.idle() {
 				f.rescheduleWait(waitTimer, waitTrigger)
 			}
 
@@ -564,18 +487,9 @@ func (f *BlobFetcher) loop() {
 			f.scheduleFetches(timeoutTimer, timeoutTrigger, nil) // Partial delivery may enable others to deliver too
 		case drop := <-f.drop:
 			// A peer was dropped, remove all traces of it
-			if _, ok := f.waitslots[drop.peer]; ok {
-				for hash := range f.waitslots[drop.peer] {
-					delete(f.waitlist[hash], drop.peer)
-					if len(f.waitlist[hash]) == 0 {
-						delete(f.waitlist, hash)
-						delete(f.waittime, hash)
-					}
-				}
-				delete(f.waitslots, drop.peer)
-				if len(f.waitlist) > 0 {
-					f.rescheduleWait(waitTimer, waitTrigger)
-				}
+			f.wait.dropPeer(drop.peer)
+			if len(f.wait.waitlist) > 0 {
+				f.rescheduleWait(waitTimer, waitTrigger)
 			}
 			// Clean up general announcement tracking
 			if _, ok := f.announces[drop.peer]; ok {
@@ -613,8 +527,8 @@ func (f *BlobFetcher) loop() {
 			return
 		}
 
-		blobFetcherWaitingPeers.Update(int64(len(f.waitslots)))
-		blobFetcherWaitingHashes.Update(int64(len(f.waitlist)))
+		blobFetcherWaitingPeers.Update(int64(len(f.wait.waitslots))) // todo
+		blobFetcherWaitingHashes.Update(int64(len(f.wait.waitlist)))
 		blobFetcherQueueingPeers.Update(int64(len(f.announces) - len(f.requests)))
 		announced := make(map[common.Hash]struct{})
 		for _, hashes := range f.announces {
@@ -635,21 +549,15 @@ func (f *BlobFetcher) loop() {
 	}
 }
 
+// todo move to buffer?
 func (f *BlobFetcher) rescheduleWait(timer *mclock.Timer, trigger chan struct{}) {
 	if *timer != nil {
 		(*timer).Stop()
 	}
 	now := f.clock.Now()
 
-	earliest := now
-	for _, instance := range f.waittime {
-		if earliest > instance {
-			earliest = instance
-			if txArriveTimeout-time.Duration(now-earliest) < txGatherSlack {
-				break
-			}
-		}
-	}
+	earliest := f.wait.getEarliest()
+
 	*timer = f.clock.AfterFunc(txArriveTimeout-time.Duration(now-earliest), func() {
 		trigger <- struct{}{}
 	})
@@ -832,4 +740,28 @@ func (f *BlobFetcher) forEachPeer(peers map[string]struct{}, do func(peer string
 	for _, peer := range list {
 		do(peer)
 	}
+}
+
+func (f *BlobFetcher) isPartial(tx common.Hash) (bool, bool) {
+	new := false
+	if _, ok := f.full[tx]; !ok {
+		if _, ok := f.partial[tx]; !ok {
+			// Not decided yet
+			new = true
+			var randomValue int
+			if f.rand == nil {
+				randomValue = rand.Intn(100)
+			} else {
+				randomValue = f.rand.Intn(100)
+			}
+			if randomValue < 15 {
+				f.full[tx] = struct{}{}
+			} else {
+				f.partial[tx] = struct{}{}
+			}
+		}
+	}
+
+	_, ok := f.partial[tx]
+	return ok, new
 }

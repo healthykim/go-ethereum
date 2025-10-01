@@ -739,7 +739,7 @@ func testBlobFetcher(t *testing.T, tt blobFetcherTest) {
 
 	// Create a fetcher and boot it up
 	fetcher := tt.init()
-	fetcher.clock = clock
+	fetcher.setClock(clock)
 	fetcher.step = wait
 
 	fetcher.Start()
@@ -783,7 +783,7 @@ func testBlobFetcher(t *testing.T, tt blobFetcherTest) {
 		case isWaitingAvailability:
 			// Check expected hashes and peers are present
 			for hash, peers := range step {
-				if waitPeers, ok := fetcher.waitlist[hash]; !ok {
+				if waitPeers, ok := fetcher.wait.waitlist[hash]; !ok {
 					t.Errorf("step %d: hash %x not in waitlist", i, hash)
 					return
 				} else {
@@ -804,7 +804,7 @@ func testBlobFetcher(t *testing.T, tt blobFetcherTest) {
 				}
 			}
 			// Check no unexpected hashes in waitlist
-			for hash := range fetcher.waitlist {
+			for hash := range fetcher.wait.waitlist {
 				if _, ok := step[hash]; !ok {
 					t.Errorf("step %d: unexpected hash %x in waitlist", i, hash)
 					return
