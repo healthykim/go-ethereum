@@ -93,7 +93,8 @@ type BlobFetcher struct {
 
 	// Buffer 2: Transactions queued for fetching (pull decision + not pull decision)
 	// "announces" is shared with stage 3, for DoS protection
-	announces map[string]map[common.Hash]*cellWithSeq // Set of announced transactions, grouped by origin peer
+	announcetime map[common.Hash]mclock.AbsTime          // Timestamp when added to announces, for metrics
+	announces    map[string]map[common.Hash]*cellWithSeq // Set of announced transactions, grouped by origin peer
 
 	// Buffer 2
 	// Stage 3: Transactions whose payloads/cells are currently being fetched (pull decision + not pull decision)
@@ -130,6 +131,7 @@ func NewBlobFetcher(
 		waitlist:      make(map[common.Hash]map[string]struct{}),
 		waittime:      make(map[common.Hash]mclock.AbsTime),
 		waitslots:     make(map[string]map[common.Hash]struct{}),
+		announcetime:  make(map[common.Hash]mclock.AbsTime),
 		announces:     make(map[string]map[common.Hash]*cellWithSeq),
 		fetches:       make(map[common.Hash]*fetchStatus),
 		requests:      make(map[string][]*cellRequest),
@@ -298,6 +300,7 @@ func (f *BlobFetcher) loop() {
 						cells: types.CustodyBitmapData,
 						seq:   nextSeq(),
 					}
+					f.announcetime[hash] = f.clock.Now()
 					reschedule[ann.origin] = struct{}{}
 					continue
 				}
@@ -326,13 +329,16 @@ func (f *BlobFetcher) loop() {
 									cells: f.custody,
 									seq:   nextSeq(),
 								}
+								f.announcetime[hash] = f.clock.Now()
 								delete(f.waitslots[peer], hash)
 								if len(f.waitslots[peer]) == 0 {
 									delete(f.waitslots, peer)
 								}
 								reschedule[peer] = struct{}{}
 							}
+							blobFetcherWaitTime.Update(f.clock.Now().Sub(f.waittime[hash]).Milliseconds())
 							delete(f.waitlist, hash)
+							delete(f.waittime, hash)
 						}
 						continue
 					}
@@ -408,6 +414,7 @@ func (f *BlobFetcher) loop() {
 							if len(f.alternates[hash]) == 0 {
 								delete(f.alternates, hash)
 								delete(f.fetches, hash)
+								delete(f.announcetime, hash)
 							}
 						}
 						if len(f.announces[peer]) == 0 {
@@ -502,8 +509,10 @@ func (f *BlobFetcher) loop() {
 							delete(f.announces, peer)
 						}
 					}
+					blobFetcherFetchTime.Update(f.clock.Now().Sub(f.announcetime[hash]).Milliseconds())
 					delete(f.alternates, hash)
 					delete(f.fetches, hash)
+					delete(f.announcetime, hash)
 				}
 			}
 			// Update mempool status for arrived hashes
@@ -590,6 +599,7 @@ func (f *BlobFetcher) loop() {
 						if len(f.alternates[hash]) == 0 {
 							delete(f.alternates, hash)
 							delete(f.fetches, hash)
+							delete(f.announcetime, hash)
 						}
 					}
 				}
