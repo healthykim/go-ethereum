@@ -662,7 +662,7 @@ func TestBlobFetcherFetchTimeout(t *testing.T) {
 			},
 
 			// Wait for fetch timeout -> should reschedule to peer B
-			doWait{time: testBlobFetchTimeout, step: true},
+			doWait{time: blobFetchTimeout, step: true},
 			isBlobScheduled{
 				announces: map[string][]blobAnnounce{
 					"B": {{hash: testBlobTxHashes[0], custody: halfCustody}},
@@ -681,7 +681,7 @@ func TestBlobFetcherFetchTimeout(t *testing.T) {
 			},
 
 			// Wait for timeout -> should drop transaction
-			doWait{time: testBlobFetchTimeout, step: true},
+			doWait{time: blobFetchTimeout, step: true},
 			isBlobScheduled{announces: nil, fetching: nil},
 			isFetching{hashes: nil},
 		},
@@ -830,7 +830,7 @@ func testBlobFetcher(t *testing.T, tt blobFetcherTest) {
 		case isBlobScheduled:
 			// Check tracking (announces) - bidirectional verification
 			for peer, announces := range step.announces {
-				peerAnnounces := fetcher.announces[peer]
+				peerAnnounces := fetcher.fetch.announces[peer]
 				if peerAnnounces == nil {
 					t.Errorf("step %d: peer %s missing from announces", i, peer)
 					continue
@@ -858,7 +858,7 @@ func testBlobFetcher(t *testing.T, tt blobFetcherTest) {
 				}
 			}
 			// Check no unexpected peers in announces
-			for peer := range fetcher.announces {
+			for peer := range fetcher.fetch.announces {
 				if _, ok := step.announces[peer]; !ok {
 					t.Errorf("step %d: unexpected peer %s in announces", i, peer)
 				}
@@ -866,7 +866,7 @@ func testBlobFetcher(t *testing.T, tt blobFetcherTest) {
 
 			// Check fetching (requests)
 			for peer, requests := range step.fetching {
-				peerRequests := fetcher.requests[peer]
+				peerRequests := fetcher.fetch.requests[peer]
 				if peerRequests == nil {
 					t.Errorf("step %d: peer %s missing from requests", i, peer)
 					continue
@@ -906,7 +906,7 @@ func testBlobFetcher(t *testing.T, tt blobFetcherTest) {
 				}
 			}
 			// Check no unexpected peers in requests
-			for peer := range fetcher.requests {
+			for peer := range fetcher.fetch.requests {
 				if _, ok := step.fetching[peer]; !ok {
 					t.Errorf("step %d: unexpected peer %s in requests", i, peer)
 				}
@@ -917,14 +917,14 @@ func testBlobFetcher(t *testing.T, tt blobFetcherTest) {
 			for _, announces := range step.fetching {
 				for _, announce := range announces {
 					hash := announce.hash
-					alternates := fetcher.alternates[hash]
+					alternates := fetcher.fetch.alternates[hash]
 					if alternates == nil {
 						t.Errorf("step %d: hash %x missing from alternates", i, hash)
 						continue
 					}
 
 					// Check that all peers with this hash in announces are in alternates with matching custody
-					for peer, peerAnnounces := range fetcher.announces {
+					for peer, peerAnnounces := range fetcher.fetch.announces {
 						if cellWithSeq := peerAnnounces[hash]; cellWithSeq != nil {
 							if altCustody, ok := alternates[peer]; !ok {
 								t.Errorf("step %d, hash %x: peer %s missing from alternates", i, hash, peer)
@@ -936,9 +936,9 @@ func testBlobFetcher(t *testing.T, tt blobFetcherTest) {
 
 					// Check that all peers in alternates actually have this hash announced with matching custody
 					for peer, altCustody := range alternates {
-						if fetcher.announces[peer] == nil || fetcher.announces[peer][hash] == nil {
+						if fetcher.fetch.announces[peer] == nil || fetcher.fetch.announces[peer][hash] == nil {
 							t.Errorf("step %d, hash %x: peer %s extra in alternates", i, hash, peer)
-						} else if cellWithSeq := fetcher.announces[peer][hash]; !cellWithSeq.cells.Same(altCustody) {
+						} else if cellWithSeq := fetcher.fetch.announces[peer][hash]; !cellWithSeq.cells.Same(altCustody) {
 							t.Errorf("step %d, hash %x, peer %s: custody bitmap mismatch between announces and alternates", i, hash, peer)
 						}
 					}
@@ -948,7 +948,7 @@ func testBlobFetcher(t *testing.T, tt blobFetcherTest) {
 		case isFetching:
 			// Check expected hashes are present in fetches
 			for hash, expected := range step.hashes {
-				if fetchStatus, ok := fetcher.fetches[hash]; !ok {
+				if fetchStatus, ok := fetcher.fetch.fetches[hash]; !ok {
 					t.Errorf("step %d: hash %x missing from fetches", i, hash)
 				} else {
 					// Check fetching bitmap
@@ -982,7 +982,7 @@ func testBlobFetcher(t *testing.T, tt blobFetcherTest) {
 				}
 			}
 			// Check no unexpected hashes in fetches
-			for hash := range fetcher.fetches {
+			for hash := range fetcher.fetch.fetches {
 				if _, ok := step.hashes[hash]; !ok {
 					t.Errorf("step %d: unexpected hash %x in fetches", i, hash)
 				}
@@ -990,7 +990,7 @@ func testBlobFetcher(t *testing.T, tt blobFetcherTest) {
 
 		case isCompleted:
 			for _, hash := range step {
-				if _, ok := fetcher.fetches[hash]; ok {
+				if _, ok := fetcher.fetch.fetches[hash]; ok {
 					t.Errorf("step %d: hash %x still in fetches (should be completed)", i, hash)
 					return
 				}
@@ -998,7 +998,7 @@ func testBlobFetcher(t *testing.T, tt blobFetcherTest) {
 
 		case isDropped:
 			for _, peer := range step {
-				if _, ok := fetcher.announces[peer]; ok {
+				if _, ok := fetcher.fetch.announces[peer]; ok {
 					t.Errorf("step %d: peer %s still has announces (should be dropped)", i, peer)
 					return
 				}
