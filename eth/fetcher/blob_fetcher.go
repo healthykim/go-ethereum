@@ -117,47 +117,20 @@ func (f *BlobFetcher) Notify(peer string, txs []common.Hash, cells types.Custody
 // Enqueue inserts a batch of received blob payloads into the blob pool.
 // This is triggered by ethHandler upon receiving direct request responses.
 func (f *BlobFetcher) Enqueue(peer string, hashes []common.Hash, cells [][]kzg4844.Cell, cellBitmap types.CustodyBitmap) error {
-	var (
-		validatedTxs   = make([]common.Hash, 0)
-		validatedCells = make([][]kzg4844.Cell, 0)
-	)
-
 	blobReplyInMeter.Mark(int64(len(hashes)))
 
-	reject := 0
-	for i := 0; i < len(hashes); i += addTxsBatchSize {
-		end := i + addTxsBatchSize
-		if end > len(hashes) {
-			end = len(hashes)
-		}
-		hashBatch := hashes[i:end]
-		cellBatch := cells[i:end]
-		for j, err := range f.validateCells(hashBatch, cellBatch, &cellBitmap) {
-			if err != nil {
-				reject++
-			} else {
-				validatedTxs = append(validatedTxs, hashBatch[j])
-				validatedCells = append(validatedCells, cellBatch[j])
-			}
-			// Currently we silently drop invalid items and continue processing -> should we disconnect?
-		}
-	}
-	blobReplyRejectMeter.Mark(int64(reject))
-
 	// Process valid data if any exists
-	if len(validatedTxs) > 0 {
-		select {
-		case f.cleanup <- &payloadDelivery{origin: peer, txs: validatedTxs, cells: validatedCells, cellBitmap: &cellBitmap}:
-		case <-f.quit:
-			return errTerminated
-		}
+	select {
+	case f.cleanup <- &payloadDelivery{origin: peer, txs: hashes, cells: cells, cellBitmap: &cellBitmap}:
+	case <-f.quit:
+		return errTerminated
 	}
 
 	return nil
 }
 
-func (f *BlobFetcher) UpdateCustody(cells *types.CustodyBitmap) {
-	f.custody = cells
+func (f *BlobFetcher) UpdateCustody(cells types.CustodyBitmap) {
+	f.custody = &cells
 }
 
 func (f *BlobFetcher) Drop(peer string) error {

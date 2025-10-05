@@ -1823,26 +1823,6 @@ func (p *BlobPool) addBuffer(tx *types.Transaction) (err error) {
 	p.queue[tx.Hash()] = tx
 	from, _ := types.Sender(p.signer, tx)
 
-	// Handle reserver for new accounts
-	if p.index[from] == nil && p.indexQueue[from] == nil {
-		if err := p.reserver.Hold(from); err != nil {
-			addNonExclusiveMeter.Mark(1)
-			return err
-		}
-		//todo release when evicted from the buffer
-		defer func() {
-			// If the transaction is rejected by some post-validation check, remove
-			// the lock on the reservation set.
-			//
-			// Note, `err` here is the named error return, which will be initialized
-			// by a return statement before running deferred methods. Take care with
-			// removing or subscoping err as it will break this clause.
-			if err != nil {
-				p.reserver.Release(from)
-			}
-		}()
-	}
-
 	next := p.state.GetNonce(from)
 	nonce := tx.Nonce()
 	pooledCount := uint64(len(p.index[from]))
@@ -1946,8 +1926,25 @@ func (p *BlobPool) addLocked(tx *types.Transaction, cellSidecar *types.BlobTxCel
 	// only by this subpool until all transactions are evicted
 	from, _ := types.Sender(p.signer, tx) // already validated above
 
-	// Reserver is already held in addBuffer
-
+	// Handle reserver for new accounts
+	if p.index[from] == nil {
+		if err := p.reserver.Hold(from); err != nil {
+			addNonExclusiveMeter.Mark(1)
+			return err
+		}
+		//todo release when evicted from the buffer
+		defer func() {
+			// If the transaction is rejected by some post-validation check, remove
+			// the lock on the reservation set.
+			//
+			// Note, `err` here is the named error return, which will be initialized
+			// by a return statement before running deferred methods. Take care with
+			// removing or subscoping err as it will break this clause.
+			if err != nil {
+				p.reserver.Release(from)
+			}
+		}()
+	}
 	// Transaction permitted into the pool from a nonce and cost perspective,
 	// insert it into the database and update the indices
 	pooledTx := NewPooledBlobTx(tx, cellSidecar)
@@ -2054,7 +2051,6 @@ func (p *BlobPool) addLocked(tx *types.Transaction, cellSidecar *types.BlobTxCel
 		p.drop()
 	}
 	p.updateStorageMetrics()
-
 	addValidMeter.Mark(1)
 	return nil
 }

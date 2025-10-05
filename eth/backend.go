@@ -43,6 +43,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
+	"github.com/ethereum/go-ethereum/eth/fetcher"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
@@ -318,7 +319,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	// Permit the downloader to use the trie cache allowance during fast sync
 	cacheLimit := options.TrieCleanLimit + options.TrieDirtyLimit + options.SnapshotLimit
-	custody := types.NewRandomCustodyBitmap(8)
 	if eth.handler, err = newHandler(&handlerConfig{
 		NodeID:         eth.p2pServer.Self().ID(),
 		Database:       chainDb,
@@ -330,7 +330,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		BloomCache:     uint64(cacheLimit),
 		EventMux:       eth.eventMux,
 		RequiredBlocks: config.RequiredBlocks,
-		Custody:        custody,
+		Custody:        *types.CustodyBitmapAll,
 	}); err != nil {
 		return nil, err
 	}
@@ -414,6 +414,7 @@ func (s *Ethereum) AccountManager() *accounts.Manager  { return s.accountManager
 func (s *Ethereum) BlockChain() *core.BlockChain       { return s.blockchain }
 func (s *Ethereum) TxPool() *txpool.TxPool             { return s.txPool }
 func (s *Ethereum) BlobTxPool() *blobpool.BlobPool     { return s.blobTxPool }
+func (s *Ethereum) BlobFetcher() *fetcher.BlobFetcher  { return s.handler.blobFetcher }
 func (s *Ethereum) Engine() consensus.Engine           { return s.engine }
 func (s *Ethereum) ChainDb() ethdb.Database            { return s.chainDb }
 func (s *Ethereum) IsListening() bool                  { return true } // Always listening

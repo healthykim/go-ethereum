@@ -152,6 +152,7 @@ type fetchBuffer struct {
 	announces    map[string]map[common.Hash]*cellWithSeq // Set of announced transactions, grouped by origin peer
 
 	// Transactions whose payloads/cells are currently being fetched (pull decision + not pull decision)
+	// todo fetches <- eviction
 	fetches  map[common.Hash]*fetchStatus // Hash -> Bitmap, in-flight transaction cells
 	requests map[string][]*cellRequest    // In-flight transaction retrievals
 	// todo simplify / remove alterantes
@@ -209,7 +210,6 @@ func (b *fetchBuffer) removeSource(peer string, tx common.Hash) {
 	if len(b.alternates[tx]) == 0 {
 		delete(b.alternates, tx)
 		delete(b.announcetime, tx)
-		delete(b.fetches, tx)
 	}
 }
 
@@ -227,6 +227,10 @@ func (b *fetchBuffer) timeout() {
 					if b.fetches[hash] != nil {
 						b.fetches[hash].fetching = b.fetches[hash].fetching.Difference(req.cells)
 					}
+					flight := b.fetches[hash].fetching.OneCount() - len(b.fetches[hash].fetched)
+					if _, ok := b.alternates[hash]; !ok && flight == 0 {
+						delete(b.fetches, hash)
+					}
 				}
 			} else {
 				newRequests = append(newRequests, req)
@@ -240,8 +244,9 @@ func (b *fetchBuffer) timeout() {
 	}
 }
 
+// todo combine
 func (b *fetchBuffer) markDelivery(delivery *payloadDelivery) {
-	request := new(cellRequest)
+	var request *cellRequest
 	requestId := 0
 	for _, hash := range delivery.txs {
 		// Find the request
@@ -271,7 +276,6 @@ func (b *fetchBuffer) markDelivery(delivery *payloadDelivery) {
 		b.fetches[hash].fetched = append(b.fetches[hash].fetched, delivery.cellBitmap.Indices()...)
 		b.fetches[hash].cells = append(b.fetches[hash].cells, delivery.cells[i]...)
 
-		// Update announces of this peer
 		b.removeSource(delivery.origin, hash)
 	}
 	// Remove the request
@@ -309,11 +313,12 @@ func (b *fetchBuffer) markDelivery(delivery *payloadDelivery) {
 			}
 		}
 	}
+
 }
 
 // If all indices are needed, `need` should be set to nil
 func (b *fetchBuffer) removeComplete(tx common.Hash, need *types.CustodyBitmap) (common.Hash, []kzg4844.Cell) {
-	if b.fetches[tx] == nil {
+	if _, ok := b.fetches[tx]; !ok {
 		// dropped
 		return common.Hash{}, nil
 	}
@@ -367,6 +372,10 @@ func (b *fetchBuffer) dropPeer(peer string) {
 				// Undelivered hash, reschedule if there's an alternative origin available
 				if b.fetches[hash] != nil {
 					b.fetches[hash].fetching = b.fetches[hash].fetching.Difference(req.cells)
+				}
+				flight := b.fetches[hash].fetching.OneCount() - len(b.fetches[hash].fetched)
+				if _, ok := b.alternates[hash]; !ok && flight == 0 {
+					delete(b.fetches, hash)
 				}
 			}
 		}

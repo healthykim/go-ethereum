@@ -20,10 +20,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 )
@@ -105,19 +103,7 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		return h.txFetcher.Enqueue(peer.ID(), *packet, true)
 
 	case *eth.CellsResponse:
-		requested := packet.Mask.OneCount()
-		respond := min(len(packet.Hashes), len(packet.Cells))
-		hashes := make([]common.Hash, respond)
-		cells := make([][]kzg4844.Cell, respond)
-
-		for i := range respond {
-			if len(packet.Cells[i]) == requested {
-				hashes = append(hashes, packet.Hashes[i])
-				cells = append(cells, packet.Cells[i])
-			}
-		}
-
-		return h.blobFetcher.Enqueue(peer.ID(), hashes, cells, packet.Mask)
+		return h.blobFetcher.Enqueue(peer.ID(), packet.Hashes, packet.Cells, packet.Mask)
 
 	default:
 		return fmt.Errorf("unexpected eth packet type: %T", packet)
