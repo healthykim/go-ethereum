@@ -546,13 +546,13 @@ func (f *TxFetcher) loop() {
 					if _, ok := f.announced[hash]; ok {
 						panic("announced tracker already contains waitlist item")
 					}
+					f.announced[hash] = f.waitlist[hash]
 					for peer := range f.waitlist[hash] {
 						if announces := f.announces[peer]; announces != nil {
 							announces[hash] = f.waitslots[peer][hash]
 						} else {
 							f.announces[peer] = map[common.Hash]*txMetadataWithSeq{hash: f.waitslots[peer][hash]}
 						}
-						f.announced[hash] = f.waitlist[hash]
 						delete(f.waitslots[peer], hash)
 						if len(f.waitslots[peer]) == 0 {
 							delete(f.waitslots, peer)
@@ -590,11 +590,11 @@ func (f *TxFetcher) loop() {
 							}
 						}
 						// Move the delivery back from fetching to queued
-						delete(f.announces[peer], hash)
 						delete(f.announced[hash], peer)
 						if len(f.announced[hash]) == 0 {
 							delete(f.announced, hash)
 						}
+						delete(f.announces[peer], hash)
 						delete(f.fetching, hash)
 					}
 					if len(f.announces[peer]) == 0 {
