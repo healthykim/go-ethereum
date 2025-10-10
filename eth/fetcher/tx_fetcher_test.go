@@ -2018,6 +2018,20 @@ func testTransactionFetcher(t *testing.T, tt txFetcherTest) {
 					t.Errorf("step %d: peer %s extra in announces", i, peer)
 				}
 			}
+			for peer := range fetcher.announces {
+				for hash := range fetcher.announces[peer] {
+					if _, ok := fetcher.announced[hash][peer]; !ok {
+						t.Errorf("step %d, hash %x: peer %s missing from announced", i, hash, peer)
+					}
+				}
+			}
+			for hash := range fetcher.announced {
+				for peer := range fetcher.announced[hash] {
+					if _, ok := fetcher.announces[peer][hash]; !ok {
+						t.Errorf("step %d, hash %x: peer %s extra in announced", i, hash, peer)
+					}
+				}
+			}
 
 			// Check that all announces required to be fetching are in the
 			// appropriate sets
@@ -2093,7 +2107,7 @@ func testTransactionFetcher(t *testing.T, tt txFetcherTest) {
 		// After every step, cross validate the internal uniqueness invariants
 		// between stage one and stage two.
 		for hash := range fetcher.waittime {
-			if fetcher.announced(hash) {
+			if _, ok := fetcher.announced[hash]; ok {
 				t.Errorf("step %d: hash %s present in both stage 1 and 2", i, hash)
 			}
 		}

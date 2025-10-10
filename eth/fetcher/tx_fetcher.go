@@ -103,6 +103,7 @@ var (
 	txFetcherWaitingPeers   = metrics.NewRegisteredGauge("eth/fetcher/transaction/waiting/peers", nil)
 	txFetcherWaitingHashes  = metrics.NewRegisteredGauge("eth/fetcher/transaction/waiting/hashes", nil)
 	txFetcherQueueingPeers  = metrics.NewRegisteredGauge("eth/fetcher/transaction/queueing/peers", nil)
+	txFetcherQueueingHashes = metrics.NewRegisteredGauge("eth/fetcher/transaction/queueing/hashes", nil)
 	txFetcherFetchingPeers  = metrics.NewRegisteredGauge("eth/fetcher/transaction/fetching/peers", nil)
 	txFetcherFetchingHashes = metrics.NewRegisteredGauge("eth/fetcher/transaction/fetching/hashes", nil)
 )
@@ -188,10 +189,11 @@ type TxFetcher struct {
 	// Stage 2: Transactions that are either waiting to be allocated
 	// to a peer or are already being fetched.
 	announces map[string]map[common.Hash]*txMetadataWithSeq // Set of announced transactions, grouped by origin peer
+	announced map[common.Hash]map[string]struct{}           // Set of announced transactions
 
 	// Stage 3: Set of transactions currently being retrieved, some which may be
-	// fulfilled and some rescheduled. Note, this step shares 'announces' from the
-	// previous stage to avoid having to duplicate (need it for DoS checks).
+	// fulfilled and some rescheduled. Note, this step shares 'announces' and 'announced' from the
+	// previous stage to avoid having to duplicate and identify DoS attacks.
 	fetching map[common.Hash]string // Transaction set currently being retrieved
 	requests map[string]*txRequest  // In-flight transaction retrievals
 
@@ -227,6 +229,7 @@ func NewTxFetcherForTests(
 		waittime:    make(map[common.Hash]mclock.AbsTime),
 		waitslots:   make(map[string]map[common.Hash]*txMetadataWithSeq),
 		announces:   make(map[string]map[common.Hash]*txMetadataWithSeq),
+		announced:   make(map[common.Hash]map[string]struct{}),
 		fetching:    make(map[common.Hash]string),
 		requests:    make(map[string]*txRequest),
 		underpriced: lru.NewCache[common.Hash, time.Time](maxTxUnderpricedSetSize),
@@ -453,7 +456,7 @@ func (f *TxFetcher) loop() {
 			for i, hash := range ann.hashes {
 				// If the transaction is already downloading or queued from a different peer,
 				// track it for the new peer
-				if f.announced(hash) {
+				if _, ok := f.announced[hash]; ok {
 					// Stage 2 and 3 share the set of origins per tx
 					if announces := f.announces[ann.origin]; announces != nil {
 						announces[hash] = &txMetadataWithSeq{
@@ -468,6 +471,7 @@ func (f *TxFetcher) loop() {
 							},
 						}
 					}
+					f.announced[hash][ann.origin] = struct{}{}
 					continue
 				}
 				// If the transaction is already known to the fetcher, but not
@@ -539,7 +543,7 @@ func (f *TxFetcher) loop() {
 			for hash, instance := range f.waittime {
 				if time.Duration(f.clock.Now()-instance)+txGatherSlack > txArriveTimeout {
 					// Transaction expired without propagation, schedule for retrieval
-					if f.announced(hash) {
+					if _, ok := f.announced[hash]; ok {
 						panic("announced tracker already contains waitlist item")
 					}
 					for peer := range f.waitlist[hash] {
@@ -548,6 +552,7 @@ func (f *TxFetcher) loop() {
 						} else {
 							f.announces[peer] = map[common.Hash]*txMetadataWithSeq{hash: f.waitslots[peer][hash]}
 						}
+						f.announced[hash] = f.waitlist[hash]
 						delete(f.waitslots[peer], hash)
 						if len(f.waitslots[peer]) == 0 {
 							delete(f.waitslots, peer)
@@ -586,6 +591,10 @@ func (f *TxFetcher) loop() {
 						}
 						// Move the delivery back from fetching to queued
 						delete(f.announces[peer], hash)
+						delete(f.announced[hash], peer)
+						if len(f.announced[hash]) == 0 {
+							delete(f.announced, hash)
+						}
 						delete(f.fetching, hash)
 					}
 					if len(f.announces[peer]) == 0 {
@@ -657,6 +666,7 @@ func (f *TxFetcher) loop() {
 							delete(f.announces, peer)
 						}
 					}
+					delete(f.announced, hash)
 
 					// If a transaction currently being fetched from a different
 					// origin was delivered (delivery stolen), mark it so the
@@ -708,6 +718,10 @@ func (f *TxFetcher) loop() {
 					}
 					if _, ok := delivered[hash]; !ok {
 						if i < cutoff {
+							delete(f.announced[hash], delivery.origin)
+							if len(f.announced[hash]) == 0 {
+								delete(f.announced[hash], delivery.origin)
+							}
 							delete(f.announces[delivery.origin], hash)
 							if len(f.announces[delivery.origin]) == 0 {
 								delete(f.announces, delivery.origin)
@@ -746,11 +760,23 @@ func (f *TxFetcher) loop() {
 						}
 					}
 					delete(f.fetching, hash)
+					delete(f.announced[hash], drop.peer)
+					if len(f.announced[hash]) == 0 {
+						delete(f.announced, hash)
+					}
 				}
 				delete(f.requests, drop.peer)
 			}
 			// Clean up general announcement tracking
-			delete(f.announces, drop.peer)
+			if _, ok := f.announces[drop.peer]; ok {
+				for hash := range f.announces[drop.peer] {
+					delete(f.announced[hash], drop.peer)
+					if len(f.announced[hash]) == 0 {
+						delete(f.announced, hash)
+					}
+				}
+				delete(f.announces, drop.peer)
+			}
 
 			// If a request was cancelled, check if anything needs to be rescheduled
 			if request != nil {
@@ -765,6 +791,7 @@ func (f *TxFetcher) loop() {
 		txFetcherWaitingPeers.Update(int64(len(f.waitslots)))
 		txFetcherWaitingHashes.Update(int64(len(f.waitlist)))
 		txFetcherQueueingPeers.Update(int64(len(f.announces) - len(f.requests)))
+		txFetcherQueueingHashes.Update(int64(len(f.announced)))
 		txFetcherFetchingPeers.Update(int64(len(f.requests)))
 		txFetcherFetchingHashes.Update(int64(len(f.fetching)))
 
@@ -959,13 +986,4 @@ func rotateStrings(slice []string, n int) {
 	for i := 0; i < len(orig); i++ {
 		slice[i] = orig[(i+n)%len(orig)]
 	}
-}
-
-func (f *TxFetcher) announced(hash common.Hash) bool {
-	for _, hashes := range f.announces {
-		if hashes[hash] != nil {
-			return true
-		}
-	}
-	return false
 }
