@@ -26,9 +26,15 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/p2p/tracker"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+)
+
+var (
+	txRequestInMeter = metrics.NewRegisteredMeter("eth/handler/transaction/request/in", nil)
+	txReplyOutMeter  = metrics.NewRegisteredMeter("eth/handler/transaction/request/out", nil)
 )
 
 // requestTracker is a singleton tracker for eth/66 and newer request times.
@@ -468,6 +474,7 @@ func answerGetPooledTransactions(backend Backend, query GetPooledTransactionsReq
 		hashes []common.Hash
 		txs    []rlp.RawValue
 	)
+	txRequestInMeter.Mark(int64(len(query)))
 	for _, hash := range query {
 		if bytes >= softResponseLimit {
 			break
@@ -481,6 +488,7 @@ func answerGetPooledTransactions(backend Backend, query GetPooledTransactionsReq
 		txs = append(txs, encoded)
 		bytes += len(encoded)
 	}
+	txReplyOutMeter.Mark(int64(len(txs)))
 	return hashes, txs
 }
 

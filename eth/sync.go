@@ -30,6 +30,11 @@ func (h *handler) syncTransactions(p *eth.Peer) {
 			hashes = append(hashes, tx.Hash)
 		}
 	}
+	for _, batch := range h.txpool.Pending(txpool.PendingFilter{BlobTxs: true}) {
+		for _, tx := range batch {
+			hashes = append(hashes, tx.Hash)
+		}
+	}
 	if len(hashes) == 0 {
 		return
 	}
