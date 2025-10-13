@@ -775,6 +775,11 @@ func (srv *Server) addPeerChecks(peers map[enode.ID]*Peer, inboundCount int, c *
 func (srv *Server) listenLoop() {
 	srv.log.Debug("TCP listener up", "addr", srv.listener.Addr())
 
+	// Delay accepting inbound connections by 1 minute to allow initialization
+	srv.log.Info("Delaying inbound connection acceptance", "delay", "1m")
+	time.Sleep(1 * time.Minute)
+	srv.log.Info("Starting to accept inbound connections")
+
 	// The slots channel limits accepts of new connections.
 	tokens := defaultMaxPendingPeers
 	if srv.MaxPendingPeers > 0 {

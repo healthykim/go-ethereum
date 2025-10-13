@@ -225,6 +225,11 @@ func (d *dialScheduler) peerRemoved(c *conn) {
 
 // loop is the main loop of the dialer.
 func (d *dialScheduler) loop(it enode.Iterator) {
+	// Delay peer discovery and dialing by 1 minute to allow initialization
+	d.log.Info("Delaying peer discovery and dialing", "delay", "1m")
+	time.Sleep(1 * time.Minute)
+	d.log.Info("Starting peer discovery and dialing")
+
 	var (
 		nodesCh chan *enode.Node
 	)
