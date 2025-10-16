@@ -20,6 +20,7 @@ import (
 	"crypto/ecdsa"
 	"encoding"
 	"fmt"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common/mclock"
 	"github.com/ethereum/go-ethereum/log"
@@ -124,11 +125,16 @@ type Config struct {
 	// Logger is a custom logger to use with the p2p.Server.
 	Logger log.Logger `toml:"-"`
 
+	// PeeringDelay specifies the time to wait before starting peer discovery
+	// and accepting inbound connections. Zero means no delay.
+	PeeringDelay time.Duration `toml:",omitempty"`
+
 	clock mclock.Clock
 }
 
 type configMarshaling struct {
-	NAT configNAT
+	PeeringDelay time.Duration
+	NAT          configNAT
 }
 
 type configNAT struct {

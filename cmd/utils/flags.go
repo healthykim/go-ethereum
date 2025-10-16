@@ -868,6 +868,12 @@ var (
 		Value:    30303,
 		Category: flags.NetworkingCategory,
 	}
+	PeeringDelayFlag = &cli.DurationFlag{
+		Name:     "peering.delay",
+		Usage:    "Time to wait before starting peer discovery and accepting connections (e.g. 1m, 30s)",
+		Value:    0,
+		Category: flags.NetworkingCategory,
+	}
 
 	// Console
 	JSpathFlag = &flags.DirectoryFlag{
@@ -1375,6 +1381,10 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 		cfg.NoDial = true
 		cfg.NoDiscovery = true
 		cfg.DiscoveryV5 = false
+	}
+
+	if ctx.IsSet(PeeringDelayFlag.Name) {
+		cfg.PeeringDelay = ctx.Duration(PeeringDelayFlag.Name)
 	}
 }
 

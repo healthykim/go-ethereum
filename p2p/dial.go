@@ -139,6 +139,7 @@ type dialConfig struct {
 	log            log.Logger
 	clock          mclock.Clock
 	rand           *mrand.Rand
+	peeringDelay   time.Duration // delay before starting peer discovery and dialing
 }
 
 func (cfg dialConfig) withDefaults() dialConfig {
@@ -225,10 +226,12 @@ func (d *dialScheduler) peerRemoved(c *conn) {
 
 // loop is the main loop of the dialer.
 func (d *dialScheduler) loop(it enode.Iterator) {
-	// Delay peer discovery and dialing by 1 minute to allow initialization
-	d.log.Info("Delaying peer discovery and dialing", "delay", "1m")
-	time.Sleep(1 * time.Minute)
-	d.log.Info("Starting peer discovery and dialing")
+	// Delay peer discovery and dialing if configured
+	if d.peeringDelay > 0 {
+		d.log.Info("Delaying peer discovery and dialing", "delay", d.peeringDelay)
+		time.Sleep(d.peeringDelay)
+		d.log.Info("Starting peer discovery and dialing")
+	}
 
 	var (
 		nodesCh chan *enode.Node

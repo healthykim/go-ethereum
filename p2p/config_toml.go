@@ -4,6 +4,7 @@ package p2p
 
 import (
 	"crypto/ecdsa"
+	"time"
 
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/enode"
@@ -37,7 +38,8 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		Dialer           NodeDialer    `toml:"-"`
 		NoDial           bool          `toml:",omitempty"`
 		EnableMsgEvents  bool
-		Logger           log.Logger `toml:"-"`
+		Logger           log.Logger    `toml:"-"`
+		PeeringDelay     time.Duration `toml:",omitempty"`
 	}
 	var enc Config
 	enc.PrivateKey = c.PrivateKey
@@ -62,6 +64,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.NoDial = c.NoDial
 	enc.EnableMsgEvents = c.EnableMsgEvents
 	enc.Logger = c.Logger
+	enc.PeeringDelay = c.PeeringDelay
 	return &enc, nil
 }
 
@@ -89,7 +92,8 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		Dialer           NodeDialer `toml:"-"`
 		NoDial           *bool      `toml:",omitempty"`
 		EnableMsgEvents  *bool
-		Logger           log.Logger `toml:"-"`
+		Logger           log.Logger     `toml:"-"`
+		PeeringDelay     *time.Duration `toml:",omitempty"`
 	}
 	var dec Config
 	if err := unmarshal(&dec); err != nil {
@@ -160,6 +164,9 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.Logger != nil {
 		c.Logger = dec.Logger
+	}
+	if dec.PeeringDelay != nil {
+		c.PeeringDelay = *dec.PeeringDelay
 	}
 	return nil
 }
