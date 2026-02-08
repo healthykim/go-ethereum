@@ -299,7 +299,7 @@ func validateEvents(events chan core.NewTxsEvent, count int) error {
 	for len(received) < count {
 		select {
 		case ev := <-events:
-			received = append(received, ev.Txs...)
+			received = append(received, ev.Txs(nil)...)
 		case <-time.After(time.Second):
 			return fmt.Errorf("event #%d not fired", len(received))
 		}

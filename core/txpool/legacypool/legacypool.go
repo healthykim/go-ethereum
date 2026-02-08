@@ -1024,14 +1024,16 @@ func (pool *LegacyPool) GetRLP(hash common.Hash) []byte {
 
 // GetMetadata returns the transaction type and transaction size with the
 // given transaction hash.
-func (pool *LegacyPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
+func (pool *LegacyPool) GetMetadata(hash common.Hash) *types.TxMetadata {
 	tx := pool.all.Get(hash)
 	if tx == nil {
 		return nil
 	}
-	return &txpool.TxMetadata{
-		Type: tx.Type(),
-		Size: tx.Size(),
+	sender, _ := types.Sender(pool.signer, tx)
+	return &types.TxMetadata{
+		Type:   tx.Type(),
+		Size:   tx.Size(),
+		Sender: sender,
 	}
 }
 
@@ -1293,7 +1295,7 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 		for _, set := range events {
 			txs = append(txs, set.Flatten()...)
 		}
-		pool.txFeed.Send(core.NewTxsEvent{Txs: txs})
+		pool.txFeed.Send(core.NewTxsEventFromTxs(txs))
 	}
 }
 

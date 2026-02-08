@@ -439,7 +439,7 @@ func (es *EventSystem) handleLogs(filters filterIndex, ev []*types.Log) {
 
 func (es *EventSystem) handleTxsEvent(filters filterIndex, ev core.NewTxsEvent) {
 	for _, f := range filters[PendingTransactionsSubscription] {
-		f.txs <- ev.Txs
+		f.txs <- ev.Txs(nil)
 	}
 }
 

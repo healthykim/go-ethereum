@@ -296,7 +296,7 @@ func (p *TxPool) GetRLP(hash common.Hash) []byte {
 
 // GetMetadata returns the transaction type and transaction size with the given
 // hash.
-func (p *TxPool) GetMetadata(hash common.Hash) *TxMetadata {
+func (p *TxPool) GetMetadata(hash common.Hash) *types.TxMetadata {
 	for _, subpool := range p.subpools {
 		if meta := subpool.GetMetadata(hash); meta != nil {
 			return meta

@@ -24,7 +24,49 @@ import (
 )
 
 // NewTxsEvent is posted when a batch of transactions enter the transaction pool.
-type NewTxsEvent struct{ Txs []*types.Transaction }
+type NewTxsEvent struct {
+	txs    []*types.Transaction
+	hashes []common.Hash
+}
+
+func NewTxsEventFromTxs(txs []*types.Transaction) NewTxsEvent {
+	return NewTxsEvent{txs: txs}
+}
+
+func NewTxsEventFromMetas(hashes []common.Hash) NewTxsEvent {
+	return NewTxsEvent{hashes: hashes}
+}
+
+// Txs returns the transactions. If transactions are not set, resolve function
+// will be used to get transaction. If resolve function is nil and txs field is not set,
+// nil will be returned.
+func (e NewTxsEvent) Txs(resolve func(common.Hash) *types.Transaction) []*types.Transaction {
+	if len(e.txs) > 0 {
+		return e.txs
+	}
+	if resolve == nil {
+		return nil
+	}
+	txs := make([]*types.Transaction, 0, len(e.hashes))
+	for _, h := range e.hashes {
+		if tx := resolve(h); tx != nil {
+			txs = append(txs, tx)
+		}
+	}
+	return txs
+}
+
+// Hashes returns the transaction hashes.
+func (e NewTxsEvent) Hashes() []common.Hash {
+	if len(e.hashes) > 0 {
+		return e.hashes
+	}
+	hashes := make([]common.Hash, len(e.txs))
+	for i, tx := range e.txs {
+		hashes[i] = tx.Hash()
+	}
+	return hashes
+}
 
 // RemovedLogsEvent is posted when a reorg happens
 type RemovedLogsEvent struct{ Logs []*types.Log }

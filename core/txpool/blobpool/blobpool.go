@@ -133,16 +133,19 @@ type blobTxMeta struct {
 	evictionExecTip      *uint256.Int // Worst gas tip across all previous nonces
 	evictionExecFeeJumps float64      // Worst base fee (converted to fee jumps) across all previous nonces
 	evictionBlobFeeJumps float64      // Worse blob fee (converted to fee jumps) across all previous nonces
+
+	sender common.Address
 }
 
 // newBlobTxMeta retrieves the indexed metadata fields from a blob transaction
 // and assembles a helper struct to track in memory.
 // Requires the transaction to have a sidecar (or that we introduce a special version tag for no-sidecar).
-func newBlobTxMeta(id uint64, size uint64, storageSize uint32, tx *types.Transaction) *blobTxMeta {
+func newBlobTxMeta(id uint64, size uint64, storageSize uint32, tx *types.Transaction, sender common.Address) *blobTxMeta {
 	if tx.BlobTxSidecar() == nil {
 		// This should never happen, as the pool only admits blob transactions with a sidecar
 		panic("missing blob tx sidecar")
 	}
+
 	meta := &blobTxMeta{
 		hash:        tx.Hash(),
 		vhashes:     tx.BlobHashes(),
@@ -157,6 +160,7 @@ func newBlobTxMeta(id uint64, size uint64, storageSize uint32, tx *types.Transac
 		blobFeeCap:  uint256.MustFromBig(tx.BlobGasFeeCap()),
 		execGas:     tx.Gas(),
 		blobGas:     tx.BlobGas(),
+		sender:      sender,
 	}
 	meta.basefeeJumps = dynamicFeeJumps(meta.execFeeCap)
 	meta.blobfeeJumps = dynamicFeeJumps(meta.blobFeeCap)
@@ -531,7 +535,8 @@ func (p *BlobPool) parseTransaction(id uint64, size uint32, blob []byte) error {
 		return errors.New("missing blob sidecar")
 	}
 
-	meta := newBlobTxMeta(id, tx.Size(), size, tx)
+	sender, err := types.Sender(p.signer, tx)
+	meta := newBlobTxMeta(id, tx.Size(), size, tx, sender)
 	if p.lookup.exists(meta.hash) {
 		// This path is only possible after a crash, where deleted items are not
 		// removed via the normal shutdown-startup procedure and thus may get
@@ -539,7 +544,6 @@ func (p *BlobPool) parseTransaction(id uint64, size uint32, blob []byte) error {
 		log.Error("Rejecting duplicate blob pool entry", "id", id, "hash", tx.Hash())
 		return errors.New("duplicate blob entry")
 	}
-	sender, err := types.Sender(p.signer, tx)
 	if err != nil {
 		// This path is impossible unless the signature validity changes across
 		// restarts. For that ever improbable case, recover gracefully by ignoring
@@ -876,7 +880,7 @@ func (p *BlobPool) Reset(oldHead, newHead *types.Header) {
 			p.recheck(addr, inclusions)
 		}
 		if len(adds) > 0 {
-			p.insertFeed.Send(core.NewTxsEvent{Txs: adds})
+			p.insertFeed.Send(core.NewTxsEventFromTxs(adds))
 		}
 	}
 	// Flush out any blobs from limbo that are older than the latest finality
@@ -1070,8 +1074,10 @@ func (p *BlobPool) reinject(addr common.Address, txhash common.Hash) error {
 		return err
 	}
 
+	sender, _ := types.Sender(p.signer, tx)
+
 	// Update the indices and metrics
-	meta := newBlobTxMeta(id, tx.Size(), p.store.Size(id), tx)
+	meta := newBlobTxMeta(id, tx.Size(), p.store.Size(id), tx, sender)
 	if _, ok := p.index[addr]; !ok {
 		if err := p.reserver.Hold(addr); err != nil {
 			log.Warn("Failed to reserve account for blob pool", "tx", tx.Hash(), "from", addr, "err", err)
@@ -1352,7 +1358,7 @@ func (p *BlobPool) GetRLP(hash common.Hash) []byte {
 //
 // The size refers the length of the 'rlp encoding' of a blob transaction
 // including the attached blobs.
-func (p *BlobPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
+func (p *BlobPool) GetMetadata(hash common.Hash) *types.TxMetadata {
 	p.lock.RLock()
 	defer p.lock.RUnlock()
 
@@ -1360,9 +1366,15 @@ func (p *BlobPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
 	if !ok {
 		return nil
 	}
-	return &txpool.TxMetadata{
-		Type: types.BlobTxType,
-		Size: size,
+
+	sender, ok := p.lookup.senderOfTx(hash)
+	if !ok {
+		return nil
+	}
+	return &types.TxMetadata{
+		Type:   types.BlobTxType,
+		Size:   size,
+		Sender: sender,
 	}
 }
 
@@ -1582,7 +1594,9 @@ func (p *BlobPool) addLocked(tx *types.Transaction, checkGapped bool) (err error
 	if err != nil {
 		return err
 	}
-	meta := newBlobTxMeta(id, tx.Size(), p.store.Size(id), tx)
+
+	sender, _ := types.Sender(p.signer, tx)
+	meta := newBlobTxMeta(id, tx.Size(), p.store.Size(id), tx, sender)
 
 	var (
 		next   = p.state.GetNonce(from)
@@ -1679,8 +1693,8 @@ func (p *BlobPool) addLocked(tx *types.Transaction, checkGapped bool) (err error
 	addValidMeter.Mark(1)
 
 	// Notify all listeners of the new arrival
-	p.discoverFeed.Send(core.NewTxsEvent{Txs: []*types.Transaction{tx.WithoutBlobTxSidecar()}})
-	p.insertFeed.Send(core.NewTxsEvent{Txs: []*types.Transaction{tx.WithoutBlobTxSidecar()}})
+	p.discoverFeed.Send(core.NewTxsEventFromMetas([]common.Hash{tx.Hash()}))
+	p.insertFeed.Send(core.NewTxsEventFromTxs([]*types.Transaction{tx.WithoutBlobTxSidecar()}))
 
 	//check the gapped queue for this account and try to promote
 	if gtxs, ok := p.gapped[from]; checkGapped && ok && len(gtxs) > 0 {

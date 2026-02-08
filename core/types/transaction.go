@@ -678,3 +678,10 @@ func copyAddressPtr(a *common.Address) *common.Address {
 	cpy := *a
 	return &cpy
 }
+
+// TxMetadata denotes the metadata of a transaction.
+type TxMetadata struct {
+	Sender common.Address // TODO can we use something else for peer selection ?
+	Type   uint8          // The type of the transaction
+	Size   uint64         // The length of the 'rlp encoding' of a transaction
+}

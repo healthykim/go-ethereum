@@ -100,15 +100,17 @@ func (p *testTxPool) GetRLP(hash common.Hash) []byte {
 
 // GetMetadata returns the transaction type and transaction size with the given
 // hash.
-func (p *testTxPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
+func (p *testTxPool) GetMetadata(hash common.Hash) *types.TxMetadata {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
 	tx := p.pool[hash]
+	sender, _ := types.Sender(signer, tx)
 	if tx != nil {
-		return &txpool.TxMetadata{
-			Type: tx.Type(),
-			Size: tx.Size(),
+		return &types.TxMetadata{
+			Type:   tx.Type(),
+			Size:   tx.Size(),
+			Sender: sender,
 		}
 	}
 	return nil
@@ -123,7 +125,7 @@ func (p *testTxPool) Add(txs []*types.Transaction, sync bool) []error {
 	for _, tx := range txs {
 		p.pool[tx.Hash()] = tx
 	}
-	p.txFeed.Send(core.NewTxsEvent{Txs: txs})
+	p.txFeed.Send(core.NewTxsEventFromTxs(txs))
 	return make([]error, len(txs))
 }
 

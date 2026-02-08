@@ -79,7 +79,7 @@ type txPool interface {
 
 	// GetMetadata returns the transaction type and transaction size with the
 	// given transaction hash.
-	GetMetadata(hash common.Hash) *txpool.TxMetadata
+	GetMetadata(hash common.Hash) *types.TxMetadata
 
 	// Add should add the given transactions to the pool.
 	Add(txs []*types.Transaction, sync bool) []error
@@ -457,7 +457,7 @@ func (h *handler) Stop() {
 // - To a square root of all peers for non-blob transactions
 // - And, separately, as announcements to all peers which are not known to
 // already have the given transaction.
-func (h *handler) BroadcastTransactions(txs types.Transactions) {
+func (h *handler) BroadcastTransactions(hashes []common.Hash) {
 	var (
 		blobTxs  int // Number of blob transactions to announce only
 		largeTxs int // Number of large transactions to announce only
@@ -468,35 +468,34 @@ func (h *handler) BroadcastTransactions(txs types.Transactions) {
 		txset = make(map[*ethPeer][]common.Hash) // Set peer->hash to transfer directly
 		annos = make(map[*ethPeer][]common.Hash) // Set peer->hash to announce
 
-		signer = types.LatestSigner(h.chain.Config())
 		choice = newBroadcastChoice(h.nodeID, h.txBroadcastKey)
 		peers  = h.peers.all()
 	)
-
-	for _, tx := range txs {
+	for _, tx := range hashes {
 		var directSet map[*ethPeer]struct{}
+		meta := h.txpool.GetMetadata(tx)
 		switch {
-		case tx.Type() == types.BlobTxType:
+		case meta.Type == types.BlobTxType:
 			blobTxs++
-		case tx.Size() > txMaxBroadcastSize:
+		case meta.Size > txMaxBroadcastSize:
 			largeTxs++
 		default:
 			// Get transaction sender address. Here we can ignore any error
 			// since we're just interested in any value.
-			txSender, _ := types.Sender(signer, tx)
+			txSender := meta.Sender
 			directSet = choice.choosePeers(peers, txSender)
 		}
 
 		for _, peer := range peers {
-			if peer.KnownTransaction(tx.Hash()) {
+			if peer.KnownTransaction(tx) {
 				continue
 			}
 			if _, ok := directSet[peer]; ok {
 				// Send direct.
-				txset[peer] = append(txset[peer], tx.Hash())
+				txset[peer] = append(txset[peer], tx)
 			} else {
 				// Send announcement.
-				annos[peer] = append(annos[peer], tx.Hash())
+				annos[peer] = append(annos[peer], tx)
 			}
 		}
 	}
@@ -509,7 +508,7 @@ func (h *handler) BroadcastTransactions(txs types.Transactions) {
 		annCount += len(hashes)
 		peer.AsyncSendPooledTransactionHashes(hashes)
 	}
-	log.Trace("Distributed transactions", "plaintxs", len(txs)-blobTxs-largeTxs, "blobtxs", blobTxs, "largetxs", largeTxs,
+	log.Trace("Distributed transactions", "plaintxs", len(hashes)-blobTxs-largeTxs, "blobtxs", blobTxs, "largetxs", largeTxs,
 		"bcastpeers", len(txset), "bcastcount", directCount, "annpeers", len(annos), "anncount", annCount)
 }
 
@@ -519,7 +518,7 @@ func (h *handler) txBroadcastLoop() {
 	for {
 		select {
 		case event := <-h.txsCh:
-			h.BroadcastTransactions(event.Txs)
+			h.BroadcastTransactions(event.Hashes())
 		case <-h.txsSub.Err():
 			return
 		}

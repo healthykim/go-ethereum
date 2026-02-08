@@ -267,10 +267,11 @@ func testRecvTransactions(t *testing.T, protocol uint) {
 	}
 	select {
 	case event := <-txs:
-		if len(event.Txs) != 1 {
-			t.Errorf("wrong number of added transactions: got %d, want 1", len(event.Txs))
-		} else if event.Txs[0].Hash() != tx.Hash() {
-			t.Errorf("added wrong tx hash: got %v, want %v", event.Txs[0].Hash(), tx.Hash())
+		fulltxs := event.Txs(handler.txpool.Get)
+		if len(fulltxs) != 1 {
+			t.Errorf("wrong number of added transactions: got %d, want 1", len(fulltxs))
+		} else if fulltxs[0].Hash() != tx.Hash() {
+			t.Errorf("added wrong tx hash: got %v, want %v", fulltxs[0].Hash(), tx.Hash())
 		}
 	case <-time.After(2 * time.Second):
 		t.Errorf("no NewTxsEvent received within 2 seconds")
@@ -415,7 +416,7 @@ func testTransactionPropagation(t *testing.T, protocol uint) {
 		for arrived, timeout := 0, false; arrived < len(txs) && !timeout; {
 			select {
 			case event := <-txChs[i]:
-				arrived += len(event.Txs)
+				arrived += len(event.Hashes())
 			case <-time.After(2 * time.Second):
 				t.Errorf("sink %d: transaction propagation timed out: have %d, want %d", i, arrived, len(txs))
 				timeout = true

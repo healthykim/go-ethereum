@@ -284,7 +284,7 @@ func TestPendingTxFilter(t *testing.T) {
 	fid0 := api.NewPendingTransactionFilter(nil)
 
 	time.Sleep(1 * time.Second)
-	backend.txFeed.Send(core.NewTxsEvent{Txs: transactions})
+	backend.txFeed.Send(core.NewTxsEventFromTxs(transactions))
 
 	timeout := time.Now().Add(1 * time.Second)
 	for {
@@ -341,7 +341,7 @@ func TestPendingTxFilterFullTx(t *testing.T) {
 	fid0 := api.NewPendingTransactionFilter(&fullTx)
 
 	time.Sleep(1 * time.Second)
-	backend.txFeed.Send(core.NewTxsEvent{Txs: transactions})
+	backend.txFeed.Send(core.NewTxsEventFromTxs(transactions))
 
 	timeout := time.Now().Add(1 * time.Second)
 	for {
@@ -743,7 +743,7 @@ func TestPendingTxFilterDeadlock(t *testing.T) {
 			}
 
 			tx := types.NewTransaction(i, common.HexToAddress("0xb794f5ea0ba39494ce83a213fffba74279579268"), new(big.Int), 0, new(big.Int), nil)
-			backend.txFeed.Send(core.NewTxsEvent{Txs: []*types.Transaction{tx}})
+			backend.txFeed.Send(core.NewTxsEventFromTxs([]*types.Transaction{tx}))
 			i++
 		}
 	}()
