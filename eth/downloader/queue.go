@@ -29,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/prque"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/types/bal"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/log"
@@ -39,6 +40,7 @@ import (
 const (
 	bodyType    = uint(0)
 	receiptType = uint(1)
+	balType     = uint(2)
 )
 
 var (
@@ -46,6 +48,8 @@ var (
 	blockCacheInitialItems = 2048              // Initial number of blocks to start fetching, before we know the sizes of the blocks
 	blockCacheMemory       = 256 * 1024 * 1024 // Maximum amount of memory to use for block caching
 	blockCacheSizeWeight   = 0.1               // Multiplier to approximate the average block size based on past ones
+
+	BALRetentionPeriod = uint64(3532 * 32 * 12) // todo: better place // (3533-1) epochs * 32 slots * 12 seconds, 1 epoch for buffer
 )
 
 var (
@@ -71,9 +75,10 @@ type fetchResult struct {
 	Transactions types.Transactions
 	Receipts     rlp.RawValue
 	Withdrawals  types.Withdrawals
+	BAL          *bal.BlockAccessList
 }
 
-func newFetchResult(header *types.Header, snapSync bool) *fetchResult {
+func newFetchResult(header *types.Header, snapSync bool, balBoundary uint64) *fetchResult {
 	item := &fetchResult{
 		Header: header,
 	}
@@ -88,6 +93,10 @@ func newFetchResult(header *types.Header, snapSync bool) *fetchResult {
 			item.Receipts = rlp.EmptyList
 		} else {
 			item.pending.Store(item.pending.Load() | (1 << receiptType))
+		}
+	} else {
+		if header.BlockAccessListHash != nil && header.Time >= balBoundary {
+			item.pending.Store(item.pending.Load() | (1 << balType))
 		}
 	}
 	return item
@@ -121,6 +130,13 @@ func (f *fetchResult) SetReceiptsDone() {
 	}
 }
 
+// SetBALsDone flags the bals as finished.
+func (f *fetchResult) SetBALDone() {
+	if v := f.pending.Load(); (v & (1 << balType)) != 0 {
+		f.pending.Add(-4)
+	}
+}
+
 // Done checks if the given type is done already
 func (f *fetchResult) Done(kind uint) bool {
 	v := f.pending.Load()
@@ -142,6 +158,13 @@ type queue struct {
 	receiptTaskQueue *prque.Prque[int64, *types.Header] // Priority queue of the headers to fetch the receipts for
 	receiptPendPool  map[string]*fetchRequest           // Currently pending receipt retrieval operations
 	receiptWakeCh    chan bool                          // Channel to notify when receipt fetcher of new tasks
+
+	balTaskPool  map[common.Hash]*types.Header      // Pending bal retrieval tasks, mapping hashes to headers
+	balTaskQueue *prque.Prque[int64, *types.Header] // Priority queue of the headers to fetch the bals for
+	balPendPool  map[string]*fetchRequest           // Currently pending bal retrieval operations
+	balWakeCh    chan bool                          // Channel to notify when bal fetcher of new tasks
+
+	balBoundary uint64 // Timestamp where to start fetching BAL
 
 	resultCache *resultStore       // Downloaded but not yet delivered fetch results
 	resultSize  common.StorageSize // Approximate size of a block (exponential moving average)
@@ -185,6 +208,10 @@ func (q *queue) Reset(blockCacheLimit int, thresholdInitialSize int) {
 	q.receiptTaskQueue.Reset()
 	q.receiptPendPool = make(map[string]*fetchRequest)
 
+	q.balTaskPool = make(map[common.Hash]*types.Header)
+	q.balTaskQueue.Reset()
+	q.balPendPool = make(map[string]*fetchRequest)
+
 	q.resultCache = newResultStore(blockCacheLimit)
 	q.resultCache.SetThrottleThreshold(uint64(thresholdInitialSize))
 }
@@ -214,6 +241,14 @@ func (q *queue) PendingReceipts() int {
 	return q.receiptTaskQueue.Size()
 }
 
+// PendingBALs retrieves the number of bals pending for retrieval.
+func (q *queue) PendingBALs() int {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+
+	return q.balTaskQueue.Size()
+}
+
 // InFlightBlocks retrieves whether there are block fetch requests currently in
 // flight.
 func (q *queue) InFlightBlocks() bool {
@@ -232,13 +267,22 @@ func (q *queue) InFlightReceipts() bool {
 	return len(q.receiptPendPool) > 0
 }
 
+// InFlightBALs retrieves whether there are bal fetch requests currently
+// in flight.
+func (q *queue) InFlightBALs() bool {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+
+	return len(q.balPendPool) > 0
+}
+
 // Idle returns if the queue is fully idle or has some data still inside.
 func (q *queue) Idle() bool {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
-	queued := q.blockTaskQueue.Size() + q.receiptTaskQueue.Size()
-	pending := len(q.blockPendPool) + len(q.receiptPendPool)
+	queued := q.blockTaskQueue.Size() + q.receiptTaskQueue.Size() + q.balTaskQueue.Size()
+	pending := len(q.blockPendPool) + len(q.receiptPendPool) + len(q.balPendPool)
 
 	return (queued + pending) == 0
 }
@@ -278,6 +322,14 @@ func (q *queue) Schedule(headers []*types.Header, hashes []common.Hash, from uin
 			} else {
 				q.receiptTaskPool[hash] = header
 				q.receiptTaskQueue.Push(header, -int64(header.Number.Uint64()))
+			}
+		}
+		if q.mode == ethconfig.FullSync && header.BlockAccessListHash != nil && header.Time >= q.balBoundary {
+			if _, ok := q.balTaskPool[hash]; ok {
+				log.Warn("Header already scheduled for BAL fetch", "number", header.Number, "hash", hash)
+			} else {
+				q.balTaskPool[hash] = header
+				q.balTaskQueue.Push(header, -int64(header.Number.Uint64()))
 			}
 		}
 		inserts++
@@ -328,6 +380,7 @@ func (q *queue) Results(block bool) []*fetchResult {
 			size += common.StorageSize(tx.Size())
 		}
 		size += common.StorageSize(result.Withdrawals.Size())
+		size += common.StorageSize(result.BAL.EncodedSize())
 		q.resultSize = common.StorageSize(blockCacheSizeWeight)*size +
 			(1-common.StorageSize(blockCacheSizeWeight))*q.resultSize
 	}
@@ -337,7 +390,7 @@ func (q *queue) Results(block bool) []*fetchResult {
 	throttleThreshold = q.resultCache.SetThrottleThreshold(throttleThreshold)
 
 	// With results removed from the cache, wake throttled fetchers
-	for _, ch := range []chan bool{q.blockWakeCh, q.receiptWakeCh} {
+	for _, ch := range []chan bool{q.blockWakeCh, q.receiptWakeCh, q.balWakeCh} {
 		select {
 		case ch <- true:
 		default:
@@ -365,6 +418,7 @@ func (q *queue) stats() []interface{} {
 	return []interface{}{
 		"receiptTasks", q.receiptTaskQueue.Size(),
 		"blockTasks", q.blockTaskQueue.Size(),
+		"balTasks", q.balTaskQueue.Size(),
 		"itemSize", q.resultSize,
 	}
 }
@@ -387,6 +441,13 @@ func (q *queue) ReserveReceipts(p *peerConnection, count int) (*fetchRequest, bo
 	defer q.lock.Unlock()
 
 	return q.reserveHeaders(p, count, q.receiptTaskPool, q.receiptTaskQueue, q.receiptPendPool, receiptType)
+}
+
+func (q *queue) ReserveBALs(p *peerConnection, count int) (*fetchRequest, bool, bool) {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+
+	return q.reserveHeaders(p, count, q.balTaskPool, q.balTaskQueue, q.balPendPool, balType)
 }
 
 // reserveHeaders reserves a set of data download operations for a given peer,
@@ -424,8 +485,7 @@ func (q *queue) reserveHeaders(p *peerConnection, count int, taskPool map[common
 
 		// we can ask the resultcache if this header is within the
 		// "prioritized" segment of blocks. If it is not, we need to throttle
-
-		stale, throttle, item, err := q.resultCache.AddFetch(header, q.mode == ethconfig.SnapSync)
+		stale, throttle, item, err := q.resultCache.AddFetch(header, q.mode == ethconfig.SnapSync, q.balBoundary)
 		if stale {
 			// Don't put back in the task queue, this item has already been
 			// delivered upstream
@@ -505,6 +565,12 @@ func (q *queue) Revoke(peerID string) {
 		}
 		delete(q.receiptPendPool, peerID)
 	}
+	if request, ok := q.balPendPool[peerID]; ok {
+		for _, header := range request.Headers {
+			q.balTaskQueue.Push(header, -int64(header.Number.Uint64()))
+		}
+		delete(q.balPendPool, peerID)
+	}
 }
 
 // ExpireBodies checks for in flight block body requests that exceeded a timeout
@@ -525,6 +591,16 @@ func (q *queue) ExpireReceipts(peer string) int {
 
 	receiptTimeoutMeter.Mark(1)
 	return q.expire(peer, q.receiptPendPool, q.receiptTaskQueue)
+}
+
+// ExpireBALs checks for in flight bal requests that exceeded a timeout
+// allowance, canceling them and returning the responsible peers for penalisation.
+func (q *queue) ExpireBALs(peer string) int {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+
+	balTimeoutMeter.Mark(1)
+	return q.expire(peer, q.balPendPool, q.balTaskPool)
 }
 
 // expire is the generic check that moves a specific expired task from a pending
@@ -642,6 +718,31 @@ func (q *queue) DeliverReceipts(id string, receiptList []rlp.RawValue, receiptLi
 		receiptReqTimer, receiptInMeter, receiptDropMeter, len(receiptList), validate, reconstruct)
 }
 
+func (q *queue) DeliverBALs(id string, rawBALs []eth.RawBlockAccessList, balHashes []common.Hash) (int, error) {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+
+	var bals []*bal.BlockAccessList
+	validate := func(index int, header *types.Header) error {
+		if balHashes[index] != *header.BlockAccessListHash {
+			return errInvalidBAL
+		}
+		b, err := rawBALs[index].Items()
+		if err != nil {
+			return fmt.Errorf("%w: bad bal: %v", errInvalidBAL, err)
+		}
+		blockBAL := bal.BlockAccessList(b)
+		bals = append(bals, &blockBAL)
+		return nil
+	}
+	reconstruct := func(index int, result *fetchResult) {
+		result.BAL = bals[index]
+		result.SetBALDone()
+	}
+	return q.deliver(id, q.balTaskPool, q.balTaskQueue, q.balPendPool,
+		balReqTimer, balInMeter, balDropMeter, len(rawBALs), validate, reconstruct)
+}
+
 // deliver injects a data retrieval response into the results queue.
 //
 // Note, this method expects the queue lock to be already held for writing. The
@@ -726,11 +827,12 @@ func (q *queue) deliver(id string, taskPool map[common.Hash]*types.Header,
 
 // Prepare configures the result cache to allow accepting and caching inbound
 // fetch results.
-func (q *queue) Prepare(offset uint64, mode SyncMode) {
+func (q *queue) Prepare(offset uint64, mode SyncMode, balBoundary uint64) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
 	// Prepare the queue for sync results
 	q.resultCache.Prepare(offset)
 	q.mode = mode
+	q.balBoundary = balBoundary
 }

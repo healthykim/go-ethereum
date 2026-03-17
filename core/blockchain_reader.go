@@ -296,6 +296,15 @@ func (bc *BlockChain) GetReceiptsRLP(hash common.Hash) rlp.RawValue {
 	return rawdb.ReadReceiptsRLP(bc.db, hash, number)
 }
 
+// GetAccessListRLP retrieves the block access list of a block in RLP encoding.
+func (bc *BlockChain) GetAccessListRLP(hash common.Hash) rlp.RawValue {
+	number, ok := rawdb.ReadHeaderNumber(bc.db, hash)
+	if !ok {
+		return nil
+	}
+	return rawdb.ReadAccessListRLP(bc.db, hash, number)
+}
+
 // GetUnclesInChain retrieves all the uncles from a given block backwards until
 // a specific distance is reached.
 func (bc *BlockChain) GetUnclesInChain(block *types.Block, length int) []*types.Header {
