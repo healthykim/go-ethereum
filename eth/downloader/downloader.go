@@ -53,6 +53,8 @@ var (
 
 	reorgProtHeaderDelay = 2 // Number of headers to delay delivering to cover mini reorgs
 
+	maxBALSyncGap uint64 = 128 // Maximum sync gap to enable BAL fetching
+
 	fsHeaderSafetyNet = 2048            // Number of headers to discard in case a chain violation is detected
 	fsHeaderContCheck = 3 * time.Second // Time interval to check for header continuations during state download
 	fsMinFullBlocks   = 64              // Number of blocks to retrieve fully even in snap sync
@@ -584,15 +586,12 @@ func (d *Downloader) syncToHead() (err error) {
 			log.Info("Skip chain segment before cutoff", "origin", origin, "cutoff", d.chainCutoffNumber)
 		}
 	}
-	// Find the boundary to start BAL fetching.
-	// This is only applicable to blocks after Amsterdam
-	// (i.e., blocks whose headers contain BlockAccessListHash).
-	var balBoundary uint64
-	if latest.Time > BALRetentionPeriod {
-		balBoundary = latest.Time - BALRetentionPeriod
-	}
+	// BAL fetching is only enabled for small sync gaps. Actual fetch
+	// is done only for blocks whose headers contain a BAL hash.
+	fetchBAL := mode == ethconfig.FullSync && height-origin <= maxBALSyncGap
+
 	// Initiate the sync using a concurrent header and content retrieval algorithm
-	d.queue.Prepare(chainOffset, mode, balBoundary)
+	d.queue.Prepare(chainOffset, mode, fetchBAL)
 
 	// In beacon mode, headers are served by the skeleton syncer
 	fetchers := []func() error{

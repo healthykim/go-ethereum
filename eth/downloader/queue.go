@@ -48,8 +48,6 @@ var (
 	blockCacheInitialItems = 2048              // Initial number of blocks to start fetching, before we know the sizes of the blocks
 	blockCacheMemory       = 256 * 1024 * 1024 // Maximum amount of memory to use for block caching
 	blockCacheSizeWeight   = 0.1               // Multiplier to approximate the average block size based on past ones
-
-	BALRetentionPeriod = uint64(3532 * 32 * 12) // todo: better place // (3533-1) epochs * 32 slots * 12 seconds, 1 epoch for buffer
 )
 
 var (
@@ -78,7 +76,7 @@ type fetchResult struct {
 	BAL          *bal.BlockAccessList
 }
 
-func newFetchResult(header *types.Header, snapSync bool, balBoundary uint64) *fetchResult {
+func newFetchResult(header *types.Header, snapSync bool, fetchBAL bool) *fetchResult {
 	item := &fetchResult{
 		Header: header,
 	}
@@ -95,7 +93,7 @@ func newFetchResult(header *types.Header, snapSync bool, balBoundary uint64) *fe
 			item.pending.Store(item.pending.Load() | (1 << receiptType))
 		}
 	} else {
-		if header.BlockAccessListHash != nil && header.Time >= balBoundary {
+		if header.BlockAccessListHash != nil && fetchBAL {
 			item.pending.Store(item.pending.Load() | (1 << balType))
 		}
 	}
@@ -164,7 +162,7 @@ type queue struct {
 	balPendPool  map[string]*fetchRequest           // Currently pending bal retrieval operations
 	balWakeCh    chan bool                          // Channel to notify when bal fetcher of new tasks
 
-	balBoundary uint64 // Timestamp where to start fetching BAL
+	fetchBAL bool // Whether to fetch BALs (only for small sync gaps)
 
 	resultCache *resultStore       // Downloaded but not yet delivered fetch results
 	resultSize  common.StorageSize // Approximate size of a block (exponential moving average)
@@ -324,7 +322,7 @@ func (q *queue) Schedule(headers []*types.Header, hashes []common.Hash, from uin
 				q.receiptTaskQueue.Push(header, -int64(header.Number.Uint64()))
 			}
 		}
-		if q.mode == ethconfig.FullSync && header.BlockAccessListHash != nil && header.Time >= q.balBoundary {
+		if q.mode == ethconfig.FullSync && q.fetchBAL && header.BlockAccessListHash != nil {
 			if _, ok := q.balTaskPool[hash]; ok {
 				log.Warn("Header already scheduled for BAL fetch", "number", header.Number, "hash", hash)
 			} else {
@@ -485,7 +483,7 @@ func (q *queue) reserveHeaders(p *peerConnection, count int, taskPool map[common
 
 		// we can ask the resultcache if this header is within the
 		// "prioritized" segment of blocks. If it is not, we need to throttle
-		stale, throttle, item, err := q.resultCache.AddFetch(header, q.mode == ethconfig.SnapSync, q.balBoundary)
+		stale, throttle, item, err := q.resultCache.AddFetch(header, q.mode == ethconfig.SnapSync, q.fetchBAL)
 		if stale {
 			// Don't put back in the task queue, this item has already been
 			// delivered upstream
@@ -827,12 +825,12 @@ func (q *queue) deliver(id string, taskPool map[common.Hash]*types.Header,
 
 // Prepare configures the result cache to allow accepting and caching inbound
 // fetch results.
-func (q *queue) Prepare(offset uint64, mode SyncMode, balBoundary uint64) {
+func (q *queue) Prepare(offset uint64, mode SyncMode, fetchBAL bool) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
 	// Prepare the queue for sync results
 	q.resultCache.Prepare(offset)
 	q.mode = mode
-	q.balBoundary = balBoundary
+	q.fetchBAL = fetchBAL
 }
