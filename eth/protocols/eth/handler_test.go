@@ -589,6 +589,12 @@ func testGetBlockReceipts(t *testing.T, protocol uint) {
 		receipts rlp.RawList[*ReceiptList]
 	)
 	for i := uint64(0); i <= backend.chain.CurrentBlock().Number.Uint64(); i++ {
+		if i == 1 {
+			// Insert missing block to see whether the server skips the receipt list
+			hashes = append(hashes, common.HexToHash("0xdeadbeef"))
+			receipts.Append(nil)
+			continue
+		}
 		block := backend.chain.GetBlockByNumber(i)
 		hashes = append(hashes, block.Hash())
 		br := backend.chain.GetReceiptsByHash(block.Hash())

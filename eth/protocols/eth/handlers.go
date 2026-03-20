@@ -273,20 +273,20 @@ func ServiceGetReceiptsQuery(chain *core.BlockChain, query GetReceiptsRequest) r
 		// Retrieve the requested block's receipts
 		results := chain.GetReceiptsRLP(hash)
 		if results == nil {
-			if header := chain.GetHeaderByHash(hash); header == nil || header.ReceiptHash != types.EmptyRootHash {
-				continue
-			}
-		} else {
-			body := chain.GetBodyRLP(hash)
-			if body == nil {
-				continue
-			}
-			var err error
-			results, err = blockReceiptsToNetwork(results, body)
-			if err != nil {
-				log.Error("Error in block receipts conversion", "hash", hash, "err", err)
-				continue
-			}
+			receipts.Append(nil)
+			continue
+		}
+		body := chain.GetBodyRLP(hash)
+		if body == nil {
+			receipts.Append(nil)
+			continue
+		}
+		var err error
+		results, err = blockReceiptsToNetwork(results, body)
+		if err != nil {
+			receipts.Append(nil)
+			log.Error("Error in block receipts conversion", "hash", hash, "err", err)
+			continue
 		}
 		receipts.AppendRaw(results)
 		bytes += len(results)
