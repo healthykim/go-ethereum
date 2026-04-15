@@ -19,6 +19,7 @@ package ethtest
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -52,23 +53,19 @@ func (ec *EngineClient) token() string {
 	return token
 }
 
-// rpcRequest is the JSON-RPC 2.0 request envelope.
-type rpcRequest struct {
-	JSONRPC string `json:"jsonrpc"`
-	ID      int    `json:"id"`
-	Method  string `json:"method"`
-	Params  []any  `json:"params"`
+// rpcRequest marshals a JSON-RPC 2.0 request body for the given method and params.
+func rpcRequest(method string, params ...any) ([]byte, error) {
+	p, err := json.Marshal(params)
+	if err != nil {
+		return nil, err
+	}
+	return fmt.Appendf(nil, `{"jsonrpc":"2.0","id":1,"method":%q,"params":%s}`, method, p), nil
 }
 
 // call sends an authenticated Engine API JSON-RPC request. Response body is
 // not inspected — only transport errors are returned.
 func (ec *EngineClient) call(method string, params ...any) error {
-	body, err := json.Marshal(rpcRequest{
-		JSONRPC: "2.0",
-		ID:      1,
-		Method:  method,
-		Params:  params,
-	})
+	body, err := rpcRequest(method, params...)
 	if err != nil {
 		return err
 	}
