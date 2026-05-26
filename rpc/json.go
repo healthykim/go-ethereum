@@ -54,6 +54,15 @@ type subscriptionResultEnc struct {
 	Result any    `json:"result"`
 }
 
+// PooledMarshaler is implemented by types that marshal JSON using a pooled
+// buffer. MarshalJSONPooled returns a byte slice that may alias internal
+// pooled storage. After the caller has consumed the bytes, it must invoke
+// the returned release function so the buffer can be returned to its pool.
+// release may be nil when no pooled storage is involved.
+type PooledMarshaler interface {
+	MarshalJSONPooled() (data []byte, release func(), err error)
+}
+
 // A value of this type can a JSON-RPC request, notification, successful response or
 // error response. Which one it is depends on the fields.
 type jsonrpcMessage struct {
@@ -63,6 +72,10 @@ type jsonrpcMessage struct {
 	Params  json.RawMessage `json:"params,omitempty"`
 	Error   json.RawMessage `json:"error,omitempty"`
 	Result  json.RawMessage `json:"result,omitempty"`
+
+	// release is invoked by appendMessage after Result has been copied into the
+	// wire buffer. It returns any pooled storage backing Result to its pool.
+	release func()
 }
 
 func (msg *jsonrpcMessage) isNotification() bool {
@@ -121,21 +134,27 @@ func (msg *jsonrpcMessage) decodeError() *jsonError {
 
 func (msg *jsonrpcMessage) response(result interface{}) *jsonrpcMessage {
 	var (
-		enc []byte
-		err error
+		enc     []byte
+		release func()
+		err     error
 	)
-	// Call MarshalJSON directly for types that implement it. This avoids the
-	// expensive validation/compaction pass that json.Marshal performs on
-	// encoder output.
-	if m, ok := result.(json.Marshaler); ok {
+	// Prefer PooledMarshaler so the encoder can borrow internal storage and
+	// avoid an extra allocation. Otherwise fall back to MarshalJSON (skipping
+	// json.Marshal's validation/compaction pass), and finally to json.Marshal.
+	if m, ok := result.(PooledMarshaler); ok {
+		enc, release, err = m.MarshalJSONPooled()
+	} else if m, ok := result.(json.Marshaler); ok {
 		enc, err = m.MarshalJSON()
 	} else {
 		enc, err = json.Marshal(result)
 	}
 	if err != nil {
+		if release != nil {
+			release()
+		}
 		return msg.errorResponse(&internalServerError{errcodeMarshalError, err.Error()})
 	}
-	return &jsonrpcMessage{Version: vsn, ID: msg.ID, Result: enc}
+	return &jsonrpcMessage{Version: vsn, ID: msg.ID, Result: enc, release: release}
 }
 
 func errorMessage(err error) *jsonrpcMessage {
@@ -273,6 +292,11 @@ func appendMessage(buf []byte, msg *jsonrpcMessage) []byte {
 		buf = append(buf, msg.Result...)
 	}
 	buf = append(buf, '}')
+	if msg.release != nil {
+		msg.release()
+		msg.release = nil
+		msg.Result = nil
+	}
 	return buf
 }
 

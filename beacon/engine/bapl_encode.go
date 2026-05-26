@@ -20,18 +20,55 @@ import (
 	"github.com/fjl/jsonw"
 )
 
-// MarshalJSON implements json.Marshaler.
-func (list BlobAndProofListV1) MarshalJSON() ([]byte, error) {
-	if list == nil {
-		return []byte("null"), nil
+const jsonBufferPoolSize = 10
+
+var jsonBufferPool = make(chan *jsonw.Buffer, jsonBufferPoolSize)
+
+func getJSONBuffer() *jsonw.Buffer {
+	select {
+	case b := <-jsonBufferPool:
+		return b
+	default:
+		return new(jsonw.Buffer)
 	}
-	var b jsonw.Buffer
+}
+
+func putJSONBuffer(b *jsonw.Buffer) {
+	b.Reset()
+	select {
+	case jsonBufferPool <- b:
+	default:
+	}
+}
+
+// MarshalJSONPooled marshals the list using a buffer borrowed from
+// jsonBufferPool. The caller must invoke the returned release function once
+// the returned slice is no longer needed.
+func (list BlobAndProofListV1) MarshalJSONPooled() ([]byte, func(), error) {
+	if list == nil {
+		return []byte("null"), nil, nil
+	}
+	b := getJSONBuffer()
 	b.Array(func() {
 		for _, item := range list {
-			marshalBlobAndProofV1(&b, item)
+			marshalBlobAndProofV1(b, item)
 		}
 	})
-	return b.Output(), nil
+	return b.Output(), func() { putJSONBuffer(b) }, nil
+}
+
+// MarshalJSON implements json.Marshaler. Callers that can release the buffer
+// themselves should prefer MarshalJSONPooled to avoid the trailing copy.
+func (list BlobAndProofListV1) MarshalJSON() ([]byte, error) {
+	data, release, err := list.MarshalJSONPooled()
+	if err != nil {
+		return nil, err
+	}
+	out := append([]byte(nil), data...)
+	if release != nil {
+		release()
+	}
+	return out, nil
 }
 
 func marshalBlobAndProofV1(b *jsonw.Buffer, item *BlobAndProofV1) {
@@ -47,18 +84,34 @@ func marshalBlobAndProofV1(b *jsonw.Buffer, item *BlobAndProofV1) {
 	}
 }
 
-// MarshalJSON implements json.Marshaler.
-func (list BlobAndProofListV2) MarshalJSON() ([]byte, error) {
+// MarshalJSONPooled marshals the list using a buffer borrowed from
+// jsonBufferPool. The caller must invoke the returned release function once
+// the returned slice is no longer needed.
+func (list BlobAndProofListV2) MarshalJSONPooled() ([]byte, func(), error) {
 	if list == nil {
-		return []byte("null"), nil
+		return []byte("null"), nil, nil
 	}
-	var b jsonw.Buffer
+	b := getJSONBuffer()
 	b.Array(func() {
 		for _, item := range list {
-			marshalBlobAndProofV2(&b, item)
+			marshalBlobAndProofV2(b, item)
 		}
 	})
-	return b.Output(), nil
+	return b.Output(), func() { putJSONBuffer(b) }, nil
+}
+
+// MarshalJSON implements json.Marshaler. Callers that can release the buffer
+// themselves should prefer MarshalJSONPooled to avoid the trailing copy.
+func (list BlobAndProofListV2) MarshalJSON() ([]byte, error) {
+	data, release, err := list.MarshalJSONPooled()
+	if err != nil {
+		return nil, err
+	}
+	out := append([]byte(nil), data...)
+	if release != nil {
+		release()
+	}
+	return out, nil
 }
 
 func marshalBlobAndProofV2(b *jsonw.Buffer, item *BlobAndProofV2) {

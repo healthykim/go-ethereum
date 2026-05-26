@@ -1623,7 +1623,7 @@ func (p *BlobPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
 // blob proofs (version 0) or the cell proofs (version 1). Proofs conversion is
 // CPU intensive and prohibited in the blobpool explicitly.
 func (p *BlobPool) GetBlobs(ctx context.Context, vhashes []common.Hash, version byte) (_ []*kzg4844.Blob, _ []kzg4844.Commitment, _ [][]kzg4844.Proof, err error) {
-	_, _, spanEnd := telemetry.StartSpan(ctx, "blobpool.GetBlobs")
+	ctx, _, spanEnd := telemetry.StartSpan(ctx, "blobpool.GetBlobs")
 	defer spanEnd(&err)
 
 	var (
@@ -1651,15 +1651,21 @@ func (p *BlobPool) GetBlobs(ctx context.Context, vhashes []common.Hash, version 
 		if !exists {
 			continue
 		}
+		_, _, getEnd := telemetry.StartSpan(ctx, "blobpool.GetBlobs.storeGet",
+			telemetry.Int64Attribute("tx.id", int64(txID)))
 		data, err := p.store.Get(txID)
+		getEnd(&err)
 		if err != nil {
 			log.Error("Tracked blob transaction missing from store", "id", txID, "err", err)
 			continue
 		}
 
-		// Decode the blob transaction
 		var ptx blobTxForPool
-		if err := rlp.DecodeBytes(data, &ptx); err != nil {
+		_, _, decodeEnd := telemetry.StartSpan(ctx, "blobpool.GetBlobs.rlpDecode",
+			telemetry.Int64Attribute("data.size", int64(len(data))))
+		err = rlp.DecodeBytes(data, &ptx)
+		decodeEnd(&err)
+		if err != nil {
 			log.Error("Blobs corrupted for traced transaction", "id", txID, "err", err)
 			continue
 		}
