@@ -377,6 +377,77 @@ func (p *BlobPool) updateBlocked(addr common.Address) {
 	p.blockedAccount[addr] = bytes
 }
 
+// blocking maps the first partial transaction of every blocked account to its
+// account, but only while the p.blocked exceeds its cap. It returns nil
+// when the pool is within the blocked cap and nothing needs to be filled.
+func (p *BlobPool) blocking() map[common.Hash]common.Address {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+
+	if p.blocked <= p.blockedCap {
+		return nil
+	}
+	heads := make(map[common.Hash]common.Address, len(p.blockedAccount))
+	for addr := range p.blockedAccount {
+		for _, m := range p.index[addr] {
+			if m.custody.OneCount() < kzg4844.DataPerBlob {
+				heads[m.hash] = addr
+				break
+			}
+		}
+	}
+	return heads
+}
+
+// dropBlocked removes the given transaction and its blocked suffix from the
+// given address
+func (p *BlobPool) dropBlocked(hash common.Hash, addr common.Address) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	txs := p.index[addr]
+	idx := -1
+	for i, m := range txs {
+		if m.hash == hash {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return
+	}
+	p.dropFrom(addr, idx)
+	p.updateStorageMetrics()
+}
+
+// dropFrom removes transactions after the given index from the given address.
+// It must be called with the pool lock held.
+func (p *BlobPool) dropFrom(addr common.Address, idx int) {
+	txs := p.index[addr]
+	for _, m := range txs[idx:] {
+		p.stored -= uint64(m.storageSize)
+		p.spent[addr] = new(uint256.Int).Sub(p.spent[addr], m.costCap)
+		p.lookup.untrack(m)
+		if err := p.store.Delete(m.id); err != nil {
+			log.Error("Failed to delete dropped blob transaction", "from", addr, "id", m.id, "err", err)
+		}
+	}
+	if idx == 0 {
+		delete(p.index, addr)
+		delete(p.spent, addr)
+		p.updateBlocked(addr)
+		heap.Remove(p.evict, p.evict.index[addr])
+		p.reserver.Release(addr)
+		return
+	}
+	for i := idx; i < len(txs); i++ {
+		txs[i] = nil
+	}
+	p.index[addr] = txs[:idx]
+	p.updateBlocked(addr)
+	heap.Fix(p.evict, p.evict.index[addr])
+}
+
 // BlobPool is the transaction pool dedicated to EIP-4844 blob transactions.
 //
 // Blob transactions are special snowflakes that are designed for a very specific
@@ -1341,6 +1412,28 @@ func (p *BlobPool) getByVhash(vhash common.Hash) *BlobTxForPool {
 	return &ptx
 }
 
+// GetPooled reads and decodes the pooled blob transaction with the given tx
+// hash.
+func (p *BlobPool) GetPooled(hash common.Hash) *BlobTxForPool {
+	p.lock.RLock()
+	txID, exists := p.lookup.storeidOfTx(hash)
+	p.lock.RUnlock()
+	if !exists {
+		return nil
+	}
+	data, err := p.store.Get(txID)
+	if err != nil {
+		log.Error("Tracked blob transaction missing from store", "id", txID, "err", err)
+		return nil
+	}
+	var ptx BlobTxForPool
+	if err := rlp.DecodeBytes(data, &ptx); err != nil {
+		log.Error("Blobs corrupted for tracked transaction", "id", txID, "err", err)
+		return nil
+	}
+	return &ptx
+}
+
 // reorg assembles all the transactors and missing transactions between an old
 // and new head to figure out which account's tx set needs to be rechecked and
 // which transactions need to be requeued.
@@ -2202,7 +2295,7 @@ func (p *BlobPool) addLocked(ptx *BlobTxForPool, checkGapped bool) (err error) {
 	}
 	// If the pool went over the allowed data limit, evict transactions until
 	// we're again below the threshold
-	for p.stored > p.config.Datacap || p.blocked > p.blockedCap {
+	for p.stored > p.config.Datacap {
 		p.drop()
 	}
 	p.updateStorageMetrics()

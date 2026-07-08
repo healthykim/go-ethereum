@@ -108,6 +108,7 @@ type blobPool interface {
 	GetCustody(hash common.Hash) *types.CustodyBitmap
 	AddPooledTx(pooledTx *blobpool.BlobTxForPool) error
 	ValidateTxBasics(pooledTx *types.Transaction) error
+	GetPooled(hash common.Hash) *blobpool.BlobTxForPool
 }
 
 // handlerConfig is the collection of initialization parameters to create a full
@@ -194,6 +195,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		ValidateTx: h.blobpool.ValidateTxBasics,
 		AddToPool:  h.blobpool.AddPooledTx,
 		DropPeer:   h.removePeer,
+		Get:        h.blobpool.GetPooled,
 	})
 
 	addTxs := func(txs []*types.Transaction) []error {
@@ -233,6 +235,18 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	}
 	h.blobFetcher = fetcher.NewBlobFetcher(blobCallbacks, types.CustodyBitmapAll, nil, config.FetchProbability)
 	return h, nil
+}
+
+// requestCells looks up the peers that announced full custody for the given
+// blob transaction and asks the blob fetcher to retrieve its cells from them.
+func (h *handler) requestCells(hash common.Hash) {
+	var providers []string
+	for _, p := range h.peers.all() {
+		if p.Provider(hash) {
+			providers = append(providers, p.ID())
+		}
+	}
+	h.blobFetcher.RequestCells(hash, providers)
 }
 
 // protoTracker tracks the number of active protocol handlers.

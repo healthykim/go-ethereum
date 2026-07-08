@@ -103,6 +103,11 @@ type BlobFetcherFunctions struct {
 	DropPeer      func(string)
 }
 
+type fillRequest struct {
+	hash      common.Hash
+	providers []string
+}
+
 // BlobFetcher is responsible for managing type 3 transactions based on peer announcements.
 //
 // BlobFetcher manages three buffers:
@@ -117,6 +122,7 @@ type BlobFetcher struct {
 	notify    chan *blobTxAnnounce
 	cleanup   chan *payloadDelivery
 	drop      chan *txDrop
+	fill      chan *fillRequest
 	custodyCh chan types.CustodyBitmap
 	quit      chan struct{}
 	custody   types.CustodyBitmap
@@ -168,6 +174,7 @@ func NewBlobFetcher(fn BlobFetcherFunctions, custody types.CustodyBitmap, rand r
 		notify:           make(chan *blobTxAnnounce),
 		cleanup:          make(chan *payloadDelivery),
 		drop:             make(chan *txDrop),
+		fill:             make(chan *fillRequest),
 		custodyCh:        make(chan types.CustodyBitmap),
 		quit:             make(chan struct{}),
 		full:             make(map[common.Hash]struct{}),
@@ -225,6 +232,15 @@ func (f *BlobFetcher) Enqueue(peer string, hashes []common.Hash, cells [][]kzg48
 func (f *BlobFetcher) Drop(peer string) error {
 	select {
 	case f.drop <- &txDrop{peer: peer}:
+		return nil
+	case <-f.quit:
+		return errTerminated
+	}
+}
+
+func (f *BlobFetcher) RequestCells(hash common.Hash, providers []string) error {
+	select {
+	case f.fill <- &fillRequest{hash: hash, providers: providers}:
 		return nil
 	case <-f.quit:
 		return errTerminated
@@ -646,6 +662,22 @@ func (f *BlobFetcher) loop() {
 				f.scheduleFetches(timeoutTimer, timeoutTrigger, nil)
 				f.rescheduleTimeout(timeoutTimer, timeoutTrigger)
 			}
+
+		case req := <-f.fill:
+			if len(req.providers) == 0 {
+				break
+			}
+			f.full[req.hash] = struct{}{}
+			reschedule := make(map[string]struct{})
+			for _, peer := range req.providers {
+				if f.announces[peer] == nil {
+					f.announces[peer] = make(map[common.Hash]*cellWithSeq)
+				}
+				f.announces[peer][req.hash] = &cellWithSeq{cells: types.CustodyBitmapData, seq: f.txSeq}
+				f.txSeq++
+				reschedule[peer] = struct{}{}
+			}
+			f.scheduleFetches(timeoutTimer, timeoutTrigger, reschedule)
 
 		case cells := <-f.custodyCh:
 			f.custody = cells

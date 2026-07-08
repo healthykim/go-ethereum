@@ -275,6 +275,10 @@ func (p *testTxPool) ValidateTxBasics(_ *types.Transaction) error {
 	return nil
 }
 
+func (p *testTxPool) GetPooled(_ common.Hash) *blobpool.BlobTxForPool {
+	return nil
+}
+
 // testHandler is a live implementation of the Ethereum protocol handler, just
 // preinitialized with some sane testing defaults and the transaction pool mocked
 // out.

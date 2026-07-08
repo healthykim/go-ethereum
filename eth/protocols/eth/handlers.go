@@ -583,7 +583,7 @@ func handleNewPooledTransactionHashes(backend Backend, msg Decoder, peer *Peer) 
 	return backend.Handle(peer, ann)
 }
 
-func handleNewPooledTransactionHashes71(backend Backend, msg Decoder, peer *Peer) error {
+func handleNewPooledTransactionHashes72(backend Backend, msg Decoder, peer *Peer) error {
 	// New transaction announcement arrived, make sure we have
 	// a valid and fresh chain to handle them
 	if !backend.AcceptTxs() {
@@ -597,8 +597,11 @@ func handleNewPooledTransactionHashes71(backend Backend, msg Decoder, peer *Peer
 		return fmt.Errorf("NewPooledTransactionHashes: invalid len of fields in %v %v %v", len(ann.Hashes), len(ann.Types), len(ann.Sizes))
 	}
 	// Schedule all the unknown hashes for retrieval
-	for _, hash := range ann.Hashes {
+	for i, hash := range ann.Hashes {
 		peer.MarkTransaction(hash)
+		if ann.Types[i] == types.BlobTxType && ann.Mask == types.CustodyBitmapAll {
+			peer.MarkProvider(hash)
+		}
 	}
 	return backend.Handle(peer, ann)
 }

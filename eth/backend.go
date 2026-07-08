@@ -97,6 +97,7 @@ type Ethereum struct {
 	txPool         *txpool.TxPool
 	blobTxPool     *blobpool.BlobPool
 	blobCache      *blobpool.Cache
+	blobFiller     *blobpool.BlobFiller
 	localTxTracker *locals.TxTracker
 	blockchain     *core.BlockChain
 
@@ -361,6 +362,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}); err != nil {
 		return nil, err
 	}
+	eth.blobFiller = blobpool.NewBlobFiller(eth.blobTxPool, eth.handler.requestCells)
 
 	eth.dropper = newDropper(eth.p2pServer.MaxDialedConns(), eth.p2pServer.MaxInboundConns())
 
@@ -608,6 +610,7 @@ func (s *Ethereum) Stop() error {
 	s.closeFilterMaps <- ch
 	<-ch
 	s.filterMaps.Stop()
+	s.blobFiller.Stop()
 	s.blobCache.Stop()
 	s.txPool.Close()
 	s.blockchain.Stop()

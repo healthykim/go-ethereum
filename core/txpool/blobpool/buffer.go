@@ -78,6 +78,7 @@ type BlobBufferFunctions struct {
 	ValidateTx func(*types.Transaction) error
 	AddToPool  func(*BlobTxForPool) error
 	DropPeer   func(string)
+	Get        func(common.Hash) *BlobTxForPool
 }
 
 func NewBlobBuffer(cb BlobBufferFunctions) *BlobBuffer {
@@ -163,6 +164,15 @@ func (b *BlobBuffer) AddCells(hash common.Hash, deliveries map[string]*PeerDeliv
 	}
 	if txe, ok := b.txs[hash]; ok {
 		b.storeCompleted(hash, txe.tx, b.cells[hash])
+	} else if b.cb.Get != nil {
+		// The transaction may already be pooled as a partial and the received cells is
+		// to fill it into full blobs. To reuse the same code path, get the transaction from
+		// the pool and reattach a sidecar carrying its commitments and proofs.
+		if ptx := b.cb.Get(hash); ptx != nil {
+			cs := ptx.CellSidecar
+			tx := ptx.Tx.WithBlobTxSidecar(types.NewBlobTxSidecar(cs.Version, nil, cs.Commitments, cs.Proofs))
+			b.storeCompleted(hash, tx, b.cells[hash])
+		}
 	}
 	blobBufferCellsFirstCounter.Inc(1)
 }

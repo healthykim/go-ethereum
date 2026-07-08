@@ -67,11 +67,12 @@ type Peer struct {
 	version   uint              // Protocol version negotiated
 	lastRange atomic.Pointer[BlockRangeUpdatePacket]
 
-	txpool      TxPool // Transaction pool used by the broadcasters for liveness checks
-	blobpool    BlobPool
-	knownTxs    *knownCache        // Set of transaction hashes known to be known by this peer
-	txBroadcast chan []common.Hash // Channel used to queue transaction propagation requests
-	txAnnounce  chan []common.Hash // Channel used to queue transaction announcement requests
+	txpool           TxPool // Transaction pool used by the broadcasters for liveness checks
+	blobpool         BlobPool
+	knownTxs         *knownCache // Set of transaction hashes known to be known by this peer
+	knownProviderTxs *knownCache
+	txBroadcast      chan []common.Hash // Channel used to queue transaction propagation requests
+	txAnnounce       chan []common.Hash // Channel used to queue transaction announcement requests
 
 	tracker     *tracker.Tracker
 	reqDispatch chan *request  // Dispatch channel to send requests and track then until fulfillment
@@ -92,22 +93,23 @@ func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, txpool TxPool, blo
 	cap := p2p.Cap{Name: ProtocolName, Version: version}
 	id := p.ID().String()
 	peer := &Peer{
-		id:            id,
-		Peer:          p,
-		rw:            rw,
-		version:       version,
-		knownTxs:      newKnownCache(maxKnownTxs),
-		txBroadcast:   make(chan []common.Hash),
-		txAnnounce:    make(chan []common.Hash),
-		tracker:       tracker.New(cap, id, 5*time.Minute),
-		reqDispatch:   make(chan *request),
-		reqCancel:     make(chan *cancel),
-		resDispatch:   make(chan *response),
-		txpool:        txpool,
-		blobpool:      blobpool,
-		chainConfig:   chainConfig,
-		receiptBuffer: make(map[uint64]*receiptRequest),
-		term:          make(chan struct{}),
+		id:               id,
+		Peer:             p,
+		rw:               rw,
+		version:          version,
+		knownTxs:         newKnownCache(maxKnownTxs),
+		knownProviderTxs: newKnownCache(maxKnownTxs),
+		txBroadcast:      make(chan []common.Hash),
+		txAnnounce:       make(chan []common.Hash),
+		tracker:          tracker.New(cap, id, 5*time.Minute),
+		reqDispatch:      make(chan *request),
+		reqCancel:        make(chan *cancel),
+		resDispatch:      make(chan *response),
+		txpool:           txpool,
+		blobpool:         blobpool,
+		chainConfig:      chainConfig,
+		receiptBuffer:    make(map[uint64]*receiptRequest),
+		term:             make(chan struct{}),
 	}
 	// Start up all the broadcasters
 	go peer.broadcastTransactions()
@@ -150,6 +152,14 @@ func (p *Peer) KnownTransaction(hash common.Hash) bool {
 func (p *Peer) MarkTransaction(hash common.Hash) {
 	// If we reached the memory allowance, drop a previously known transaction hash
 	p.knownTxs.Add(hash)
+}
+
+func (p *Peer) MarkProvider(hash common.Hash) {
+	p.knownProviderTxs.Add(hash)
+}
+
+func (p *Peer) Provider(hash common.Hash) bool {
+	return p.knownProviderTxs.Contains(hash)
 }
 
 // SendTransactions sends transactions to the peer and includes the hashes
