@@ -76,15 +76,15 @@ func TestBrowserTxSubprotocol(t *testing.T) {
 	if msg.Code != txResultMsg {
 		t.Fatalf("got reply code %d, want %d", msg.Code, txResultMsg)
 	}
-	var results []TxResult
+	var results []uint64
 	if err := msg.Decode(&results); err != nil {
 		t.Fatal(err)
 	}
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
 	}
-	if results[0].Result != txResultOK {
-		t.Fatalf("got result %d, want %d", results[0].Result, txResultOK)
+	if results[0] != txResultOK {
+		t.Fatalf("got result %d, want %d", results[0], txResultOK)
 	}
 	if len(pool.added) != 1 || pool.added[0].Hash() != tx.Hash() {
 		t.Fatal("transaction was not added to the pool")
@@ -121,11 +121,11 @@ func TestBrowserTxSubprotocolInvalid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var results []TxResult
+	var results []uint64
 	if err := msg.Decode(&results); err != nil {
 		t.Fatal(err)
 	}
-	if len(results) != 1 || results[0].Result != txResultInvalidTx {
+	if len(results) != 1 || results[0] != txResultInvalidTx {
 		t.Fatalf("got results %v, want [%d]", results, txResultInvalidTx)
 	}
 	if err := <-runErr; err != p2p.DiscSubprotocolError {

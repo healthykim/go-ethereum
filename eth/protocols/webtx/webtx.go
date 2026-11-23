@@ -66,11 +66,6 @@ type TxSubmit struct {
 	rlp.RawList[*types.Transaction]
 }
 
-// TxResult reports the outcome of one submitted transaction.
-type TxResult struct {
-	Result uint8
-}
-
 // TxPool defines the methods required for the tx submit operation on the pool.
 type TxPool interface {
 	// Add puts the given transactions into the pool.
@@ -116,11 +111,12 @@ func handle(pool TxPool, rw p2p.MsgReadWriter) error {
 	}
 
 	errs := pool.Add(txs, false)
-	results := make([]TxResult, len(txs))
+	results := make([]uint64, len(txs))
 	invalid := false
 	for i, err := range errs {
-		results[i].Result = txResultCode(err)
-		if results[i].Result != txResultOK {
+		results[i] = txResultCode(err)
+		// PoolError says nothing about the transaction itself, so it is not penalized.
+		if results[i] != txResultOK && results[i] != txResultPoolError {
 			invalid = true
 		}
 	}
@@ -135,7 +131,7 @@ func handle(pool TxPool, rw p2p.MsgReadWriter) error {
 }
 
 // txResultCode maps a pool error to a result code.
-func txResultCode(err error) uint8 {
+func txResultCode(err error) uint64 {
 	switch {
 	case err == nil:
 		return txResultOK
